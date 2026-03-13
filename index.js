@@ -1,22 +1,24 @@
-
-
-
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
-
 const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 
-// РЕГИСТРАЦИЯ ШРИФТА (Путь к файлу fonts/Izhitsa.ttf)
-try {
-    registerFont(path.join(__dirname, 'fonts', 'Izhitsa.ttf'), { family: 'OrthodoxFont' });
-    console.log('✅ Шрифт успешно зарегистрирован');
-} catch (e) {
-    console.error('❌ Ошибка загрузки шрифта. Проверь наличие папки fonts и файла Izhitsa.ttf');
+// --- НАСТРОЙКА ШРИФТА ---
+const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
+
+if (fs.existsSync(fontPath)) {
+    try {
+        // Регистрируем шрифт под именем 'OrthodoxFont'
+        registerFont(fontPath, { family: 'OrthodoxFont' });
+        console.log('✅ Шрифт Izhitsa успешно загружен из:', fontPath);
+    } catch (err) {
+        console.error('❌ Ошибка при регистрации шрифта:', err);
+    }
+} else {
+    console.error('❌ ФАЙЛ НЕ НАЙДЕН! Проверь, что в папке fonts лежит файл Izhitsa.ttf');
 }
+
 const token = process.env.BOT_TOKEN;
-
-
 const bot = new Telegraf(token);
 const DATA_FILE = './users_data.json';
 
@@ -86,7 +88,7 @@ function getDetailedCalendar() {
     };
 }
 
-// --- ИСПРАВЛЕННЫЕ ОТКРЫТКИ ---
+// --- ОТКРЫТКИ ---
 async function createVerseCard(text, ref) {
     const canvas = createCanvas(1080, 1080);
     const ctx = canvas.getContext('2d');
@@ -95,23 +97,28 @@ async function createVerseCard(text, ref) {
     ctx.fillStyle = grad; ctx.fillRect(0, 0, 1080, 1080);
     ctx.strokeStyle = '#c5a059'; ctx.lineWidth = 20; ctx.strokeRect(50, 50, 980, 980);
 
-    // Используем зарегистрированный шрифт OrthodoxFont
+    // ВАЖНО: шрифт указываем без 'bold/italic', так как кастомный шрифт регистрируется как есть
     ctx.fillStyle = '#f4e7d3';
     ctx.textAlign = 'center';
-    ctx.font = '50px OrthodoxFont'; // Размер чуть больше для красоты
+    ctx.font = '50px "OrthodoxFont"'; 
 
     const wrapText = (t) => {
         let words = t.split(' '), lines = [], line = '';
-        words.forEach(w => { if (ctx.measureText(line + w).width < 850) line += w + ' '; else { lines.push(line); line = w + ' '; } });
+        words.forEach(w => { 
+            if (ctx.measureText(line + w).width < 800) line += w + ' '; 
+            else { lines.push(line); line = w + ' '; } 
+        });
         lines.push(line); return lines;
     };
+    
     const lines = wrapText(`«${text}»`);
-    const startY = 540 - (lines.length * 40);
-    lines.forEach((l, i) => ctx.fillText(l, 540, startY + (i * 85))); // Увеличил межстрочный интервал
+    const startY = 540 - (lines.length * 45);
+    lines.forEach((l, i) => ctx.fillText(l.trim(), 540, startY + (i * 90)));
 
     ctx.fillStyle = '#c5a059';
-    ctx.font = 'bold 55px OrthodoxFont';
-    ctx.fillText(ref.toUpperCase(), 540, startY + (lines.length * 85) + 120);
+    ctx.font = '55px "OrthodoxFont"';
+    ctx.fillText(ref.toUpperCase(), 540, startY + (lines.length * 90) + 100);
+    
     return canvas.toBuffer();
 }
 
@@ -193,7 +200,7 @@ bot.on('text', (ctx) => {
     ctx.replyWithHTML(txt, Markup.inlineKeyboard([btns]));
 });
 
-// --- CALLBACK ACTIONS (БЕЗ ИЗМЕНЕНИЙ) ---
+// --- CALLBACK ACTIONS ---
 bot.action(/ps_cat_(\d+)/, (ctx) => {
     const catIdx = +ctx.match[1];
     const cat = PSALMS_CATEGORIES[catIdx];
@@ -243,13 +250,7 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
 
-// Настройка команд меню
-bot.telegram.setMyCommands([
-    { command: 'start', description: '🏠 Главное меню' },
-    { command: 'bible', description: '📖 Читать Библию' },
-    { command: 'calendar', description: '📅 Календарь' }
-]);
-
+// Запуск
 bot.launch().then(() => console.log('☦️ Бот запущен'));
 
 // Мягкое выключение
