@@ -298,7 +298,7 @@ bot.hears('Чтение писания', (ctx) => {
 bot.hears('Календарь', (ctx) => {
     const cal = getDetailedCalendar();
     ctx.replyWithHTML(cal.text, Markup.inlineKeyboard([
-        [Markup.button.webApp('☦️ Открыть Азбуку Веры', cal.link)],
+        [Markup.button.url('☦️ Открыть Азбуку Веры', cal.link)],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
     ]));
 });
