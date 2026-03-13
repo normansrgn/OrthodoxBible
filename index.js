@@ -19,7 +19,6 @@ if (fs.existsSync(fontPath)) {
 
 const token = process.env.BOT_TOKEN;
 
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 const bot = new Telegraf(token);
 const DATA_FILE = './users_data.json';
@@ -173,9 +172,13 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
 
 // --- ОБРАБОТЧИКИ ---
 bot.start((ctx) => {
-    initUser(ctx.chat.id); saveDB();
+    initUser(ctx.chat.id); 
+    saveDB();
     const name = ctx.from.first_name || 'друг';
-    const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\nДобро пожаловать в <b>«Святую Библию»</b>.`;
+    const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
+        `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
+        `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
+    
     ctx.replyWithHTML(welcomeText, mainReplyMenu);
 });
 
@@ -238,30 +241,62 @@ bot.hears('Закладка', (ctx) => {
 });
 
 bot.hears('Поиск', (ctx) => {
-    ctx.replyWithHTML(`<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n\nОтправьте слово в ответ:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 К разделам', 'start_over')]]));
+    const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
+        `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
+        `────────────────────\n\n` +
+        `Введите ключевое слово или фразу, которую вы хотите найти в Библии.\n\n` +
+        `<b>Например:</b> <i>любовь, вера, заповедь</i>\n\n` +
+        `🕊 <b>Просто отправьте слово в ответ на это сообщение:</b>`;
+
+    ctx.replyWithHTML(searchText, Markup.inlineKeyboard([
+        [Markup.button.callback('🏠 В главное меню', 'start_over')]
+    ]));
 });
 
 bot.on('text', async (ctx) => {
     const q = ctx.message.text.toLowerCase();
-    if (q.length < 3) return ctx.replyWithHTML("<b>Введите минимум 3 символа.</b>");
+    // Проверка, что это не команда из меню (чтобы поиск не срабатывал на нажатие кнопок)
+    const menuButtons = ['Чтение писания', 'Стих дня', 'Календарь', 'Молитвослов', 'Псалтирь', 'Закладка', 'Поиск'];
+    if (menuButtons.includes(ctx.message.text)) return;
+
+    if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
+
     let results = [];
     outer: for (const b of bibleData) {
         for (const c of b.Chapters) {
             for (const v of c.Verses) {
                 if (v.Text.toLowerCase().includes(q)) {
-                    results.push({ bId: b.BookId, cId: c.ChapterId, vId: v.VerseId, ref: `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`, text: v.Text });
+                    results.push({
+                        bId: b.BookId,
+                        cId: c.ChapterId,
+                        vId: v.VerseId,
+                        ref: `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`,
+                        text: v.Text
+                    });
                 }
                 if (results.length >= 5) break outer;
             }
         }
     }
-    if (!results.length) return ctx.replyWithHTML("<b>Ничего не найдено.</b>");
-    let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n\n`;
+
+    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+
+    let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
+    responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
+    responseText += `────────────────────\n\n`;
+
     const buttons = [];
     results.forEach((res, index) => {
-        responseText += `<b>${index + 1}. ${res.ref}</b>\n<blockquote>${res.text}</blockquote>\n`;
-        buttons.push([Markup.button.callback(`${index + 1} 📖 Читать`, `read_new_${res.bId}_${res.cId}`), Markup.button.callback(`${index + 1} 🖼 Открытка`, `pic_${res.bId}_${res.cId}_${res.vId}`)]);
+        const itemNumber = index + 1;
+        responseText += `<b>${itemNumber}. ${res.ref}</b>\n`;
+        responseText += `<blockquote>${res.text}</blockquote>\n`;
+        
+        // Оставляем только кнопку "Читать"
+        buttons.push([
+            Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)
+        ]);
     });
+
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
