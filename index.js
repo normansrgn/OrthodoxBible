@@ -60,32 +60,61 @@ const PSALMS_CATEGORIES = [
 
 // Функция для генерации ссылок на толкования (Ekzeget.ru)
 function getInterpretationLink(bId, cId) {
-    // Карта соответствия ID книги из bible.json и порядкового номера в Толковой Библии Лопухина
     const lopuhinMap = {
-        // ВЕТХИЙ ЗАВЕТ
+        // ВЕТХИЙ ЗАВЕТ (01-39)
         1: "01", 2: "02", 3: "03", 4: "04", 5: "05", 6: "06", 7: "07", 8: "08",
         9: "09", 10: "10", 11: "11", 12: "12", 13: "13", 14: "14", 15: "15", 16: "16",
         17: "17", 18: "18", 19: "19", 20: "20", 21: "21", 22: "22", 23: "23", 24: "24",
         25: "25", 26: "26", 27: "27", 28: "28", 29: "29", 30: "30", 31: "31", 32: "32",
         33: "33", 34: "34", 35: "35", 36: "36", 37: "37", 38: "38", 39: "39",
 
-        // НОВЫЙ ЗАВЕТ
-        40: "51", 41: "52", 42: "53", 43: "54", 44: "55", // Евангелия и Деяния
-        52: "56", 53: "57", 54: "58", 55: "59", 56: "60", 57: "61", 58: "62", // Послания Павла
-        59: "63", 60: "64", 61: "74", 62: "75", 63: "76", 64: "77", 65: "72", // Послания Павла (продолжение)
-        45: "65", 46: "66", 47: "67", 48: "68", 49: "69", 50: "70", 51: "71", // Соборные послания
-        66: "73" // Апокалипсис
+        // НОВЫЙ ЗАВЕТ (51-77)
+        40: "51", // Матфея
+        41: "52", // Марка
+        42: "53", // Луки
+        43: "54", // Иоанна
+        44: "55", // Деяния
+        
+        // Соборные послания (Идут ПЕРЕД Павлом в нумерации Лопухина на сайте)
+        45: "56", // Иакова (ТЕПЕРЬ БУДЕТ ОТКРЫВАТЬСЯ ВЕРНО)
+        46: "57", // 1-е Петра
+        47: "58", // 2-е Петра
+        48: "59", // 1-е Иоанна
+        49: "60", // 2-е Иоанна
+        50: "61", // 3-е Иоанна
+        51: "62", // Иуды
+
+        // Послания Павла
+        52: "63", // Римлянам
+        53: "64", // 1-е Коринфянам
+        54: "65", // 2-е Коринфянам
+        55: "66", // Галатам
+        56: "67", // Ефесянам
+        57: "68", // Филиппийцам
+        58: "69", // Колоссянам
+        59: "70", // 1-е Фессалоникийцам
+        60: "71", // 2-е Фессалоникийцам
+        61: "72", // 1-е Тимофею
+        62: "73", // 2-е Тимофею
+        63: "74", // Титу
+        64: "75", // Филимону
+        65: "76", // Евреям
+        
+        66: "77"  // Откровение
     };
 
     const bookNum = lopuhinMap[Number(bId)];
 
     if (!bookNum) {
-        // Если ID не найден, ведем на общий корень
         return "https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/";
     }
 
-    // Формируем ссылку: https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_XX/YY
-    // Где XX — номер книги, YY — номер главы
+    // Обработка: Псалтирь на сайте имеет другую структуру ссылок, 
+    // но для большинства книг работает формат ниже:
+    if (bId === 19) {
+        return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_19/${cId}`;
+    }
+
     return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_${bookNum}/${cId}`;
 }
 
@@ -116,11 +145,11 @@ function getDetailedCalendar() {
 
     return {
         text: `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n` +
-              `<i>${now.toLocaleDateString('ru-RU')} (нового стиля)</i>\n` +
-              `────────────────────\n\n` +
-              `<b>🕯 Событие:</b> ${event}\n` +
-              `<b>🥗 Трапеза:</b> ${fast}\n\n` +
-              `📖 <a href="${azLink}">Жития, иконы и чтения на Азбуке</a>`,
+            `<i>${now.toLocaleDateString('ru-RU')} (нового стиля)</i>\n` +
+            `────────────────────\n\n` +
+            `<b>🕯 Событие:</b> ${event}\n` +
+            `<b>🥗 Трапеза:</b> ${fast}\n\n` +
+            `📖 <a href="${azLink}">Жития, иконы и чтения на Азбуке</a>`,
         link: azLink
     };
 }
@@ -165,10 +194,15 @@ async function createVerseCard(text, ref) {
 
 // --- КЛАВИАТУРЫ ---
 const mainReplyMenu = Markup.keyboard([
-    ['Чтение писания', 'Случайный стих'],
-    ['Календарь', 'Молитвослов'],
-    ['Псалтирь', 'Закладка'],
+    ['📖 Библия', '📜 Закон Божий'], // Добавили кнопку в первый ряд
+    ['Молитвослов', 'Календарь'],
     ['Поиск']
+]).resize();
+
+const bibleMenu = Markup.keyboard([
+    ['Чтение писания', 'Случайный стих'],
+    ['Псалтирь', 'Закладка'],
+    ['⬅️ Главное меню']
 ]).resize();
 
 async function sendChapter(ctx, bId, cId, isEdit = true) {
@@ -183,9 +217,9 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     if (cId > 1) nav.push(Markup.button.callback('⬅️ Пред.', `read_${bId}_${cId - 1}`));
     nav.push(Markup.button.callback('📜 К главам', `bk_${bId}`));
     if (cId < book.Chapters.length) nav.push(Markup.button.callback('След. ➡️', `read_${bId}_${cId + 1}`));
-    
+
     const kb = Markup.inlineKeyboard([
-        nav, 
+        nav,
         [Markup.button.url('🎓 Толкования святых отцов', getInterpretationLink(bId, cId))],
         [Markup.button.callback('🏠 К разделам', 'start_over')]
     ]);
@@ -196,14 +230,63 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
 
 // --- ОБРАБОТЧИКИ ---
 bot.start((ctx) => {
-    initUser(ctx.chat.id); 
+    initUser(ctx.chat.id);
     saveDB();
     const name = ctx.from.first_name || 'друг';
     const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
         `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
-    
+
     ctx.replyWithHTML(welcomeText, mainReplyMenu);
+});
+
+bot.hears('📜 Закон Божий', (ctx) => {
+    const text = `<b>❖ ЗАКОН БОЖИЙ ❖</b>\n` +
+        `<i>Основы веры и путь к спасению</i>\n` +
+        `────────────────────\n\n` +
+        `◈ <b>ВЕРОУЧЕНИЕ</b>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/1">О вере и добродетели</a>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/2">О Боге и Его свойствах</a>\n\n` +
+        `◈ <b>СВЯЩЕННАЯ ИСТОРИЯ</b>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/12">Ветхий Завет</a>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/30">Новый Завет</a>\n\n` +
+        `◈ <b>БОГОСЛУЖЕНИЕ</b>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/44">Устройство храма</a>\n` +
+        `╰ <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/49">Таинства Церкви</a>\n\n` +
+        `────────────────────\n` +
+        `📖 <a href="https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/"><b>ПОЛНЫЙ УЧЕБНИК СЕР. СЛОБОДСКОГО</b></a>`;
+
+    ctx.replyWithHTML(text, {
+        link_preview_options: {
+            url: 'https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/',
+            is_disabled: false,
+            prefer_large_media: true
+        },
+        ...Markup.inlineKeyboard([
+            [Markup.button.webApp('☦️ Читать полный Закон Божий', 'https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/')],
+            [Markup.button.callback('🏠 В главное меню', 'start_over')]
+        ])
+    });
+});
+
+// --- НАВИГАЦИЯ МЕНЮ ---
+bot.hears('📖 Библия', (ctx) => {
+    const text =
+        `<b>📖 СВЯЩЕННОЕ ПИСАНИЕ</b>\n` +
+        `«Слово Твоё — светильник ноге моей и свет стезе моей» (Пс. 118:105)\n\n` +
+        `Библия — это богодухновенное Писание, через которое Господь открывает людям Свою волю.\n\n` +
+        `Здесь вы можете:\n` +
+        `• читать книги Ветхого и Нового Завета\n` +
+        `• открыть случайный стих для духовного наставления\n` +
+        `• читать Псалтирь по жизненным нуждам\n` +
+        `• сохранить место чтения в закладку\n\n` +
+        `Выберите нужный раздел ниже.`;
+
+    ctx.replyWithHTML(text, bibleMenu);
+});
+
+bot.hears('⬅️ Главное меню', (ctx) => {
+    ctx.reply('🏠 Главное меню', mainReplyMenu);
 });
 
 bot.hears('Чтение писания', (ctx) => {
@@ -279,7 +362,7 @@ bot.hears('Поиск', (ctx) => {
 
 bot.on('text', async (ctx) => {
     const q = ctx.message.text.toLowerCase();
-    const menuButtons = ['Чтение писания', 'Стих дня', 'Календарь', 'Молитвослов', 'Псалтирь', 'Закладка', 'Поиск'];
+const menuButtons = ['📖 Библия', '📜 Закон Божий', '🙏 Молитвы', '📅 Календарь', '🔎 Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
     if (menuButtons.includes(ctx.message.text)) return;
     if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
 
