@@ -17,7 +17,6 @@ try {
 const token = process.env.BOT_TOKEN;
 
 
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 const bot = new Telegraf(token);
 const DATA_FILE = './users_data.json';
 
