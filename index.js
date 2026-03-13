@@ -3,6 +3,7 @@
 
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
+
 const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 
