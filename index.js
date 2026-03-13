@@ -8,17 +8,19 @@ const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
 
 if (fs.existsSync(fontPath)) {
     try {
-        // Регистрируем шрифт под именем 'OrthodoxFont'
         registerFont(fontPath, { family: 'OrthodoxFont' });
-        console.log('✅ Шрифт Izhitsa успешно загружен из:', fontPath);
+        console.log('✅ Шрифт Izhitsa успешно загружен');
     } catch (err) {
         console.error('❌ Ошибка при регистрации шрифта:', err);
     }
 } else {
-    console.error('❌ ФАЙЛ НЕ НАЙДЕН! Проверь, что в папке fonts лежит файл Izhitsa.ttf');
+    console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+
 const token = process.env.BOT_TOKEN;
+
 const bot = new Telegraf(token);
 const DATA_FILE = './users_data.json';
 
@@ -44,7 +46,6 @@ try {
 const BIBLE_BOOKS = { 1: "Бытие", 2: "Исход", 3: "Левит", 4: "Числа", 5: "Второзаконие", 6: "Иисус Навин", 7: "Судьи", 8: "Руфь", 9: "1-я Царств", 10: "2-я Царств", 11: "3-я Царств", 12: "4-я Царств", 13: "1-я Паралипоменон", 14: "2-я Паралипоменон", 15: "Ездра", 16: "Неемия", 17: "Есфирь", 18: "Иов", 19: "Псалтирь", 20: "Притчи", 21: "Екклесиаст", 22: "Песнь Песней", 23: "Исаия", 24: "Иеремия", 25: "Плач Иеремии", 26: "Иезекииль", 27: "Даниил", 28: "Осия", 29: "Иоиль", 30: "Амос", 31: "Авдий", 32: "Иона", 33: "Михей", 34: "Наум", 35: "Аввакум", 36: "Софония", 37: "Аггей", 38: "Захария", 39: "Малахия", 40: "От Матфея", 41: "От Марка", 42: "От Луки", 43: "От Иоанна", 44: "Деяния", 45: "Иакова", 46: "1-е Петра", 47: "2-е Петра", 48: "1-е Иоанна", 49: "2-е Иоанна", 50: "3-е Иоанна", 51: "Иуды", 52: "К Римлянам", 53: "1-е Коринфянам", 54: "2-е Коринфянам", 55: "К Галатам", 56: "К Ефесянам", 57: "К Филиппийцам", 58: "К Колоссянам", 59: "1-е Фессалоникийцам", 60: "2-е Фессалоникийцам", 61: "1-е Тимофею", 62: "2-е Тимофею", 63: "К Титу", 64: "К Филимону", 65: "К Евреям", 66: "Откровение" };
 const getBookName = (id) => BIBLE_BOOKS[id] || `Книга ${id}`;
 
-// --- КАТЕГОРИИ ПСАЛТИРИ ---
 const PSALMS_CATEGORIES = [
     { name: 'Благодарение', psalms: [33, 65, 102, 117, 145, 149] },
     { name: 'В скорби и унынии', psalms: [26, 36, 39, 41, 56, 101] },
@@ -88,56 +89,86 @@ function getDetailedCalendar() {
     };
 }
 
-// --- ОТКРЫТКИ ---
 async function createVerseCard(text, ref) {
     const canvas = createCanvas(1080, 1080);
     const ctx = canvas.getContext('2d');
-    
-    // Фон и рамка
-    const grad = ctx.createLinearGradient(0, 0, 1080, 1080);
-    grad.addColorStop(0, '#1a1a1a'); 
-    grad.addColorStop(1, '#2c2c2c');
-    ctx.fillStyle = grad; 
+
+    // 1. Фон: Цвет благородного светлого пергамента / слоновой кости
+    ctx.fillStyle = '#FDFBF7';
     ctx.fillRect(0, 0, 1080, 1080);
-    ctx.strokeStyle = '#c5a059'; 
-    ctx.lineWidth = 20; 
-    ctx.strokeRect(50, 50, 980, 980);
 
-    // Подготовка текста (убираем все виды кавычек, так как в шрифте их нет)
-    const cleanText = text.replace(/[«»""'']/g, '').trim();
+    // 2. Тонкая изящная рамка
+    ctx.strokeStyle = '#D4AF37'; // Приглушенное золото
+    ctx.lineWidth = 2;
+    // Рисуем основную рамку
+    ctx.strokeRect(80, 80, 920, 920);
+    // Добавляем маленькие декоративные уголки (крестики) для стиля
+    const s = 20; // размер хвостика уголка
+    const padding = 80;
+    const size = 920;
 
-    ctx.fillStyle = '#f4e7d3';
-    ctx.textAlign = 'center';
-    ctx.font = '50px "OrthodoxFont"'; 
-
-    const wrapText = (t) => {
-        let words = t.split(' '), lines = [], line = '';
-        words.forEach(w => { 
-            if (ctx.measureText(line + w).width < 800) line += w + ' '; 
-            else { lines.push(line.trim()); line = w + ' '; } 
-        });
-        lines.push(line.trim()); 
-        return lines;
-    };
-    
-    const lines = wrapText(cleanText);
-    // Вычисляем начальную точку Y, чтобы текст был ровно по центру
-    const lineHeight = 90;
-    const totalHeight = lines.length * lineHeight;
-    let currentY = 540 - (totalHeight / 2) + 40; 
-
-    lines.forEach((l) => {
-        ctx.fillText(l, 540, currentY);
-        currentY += lineHeight;
+    ctx.lineWidth = 4;
+    // Рисуем 4 уголка, которые чуть выступают за границы
+    const corners = [
+        [padding, padding], [padding + size, padding],
+        [padding, padding + size], [padding + size, padding + size]
+    ];
+    corners.forEach(([x, y]) => {
+        ctx.beginPath();
+        ctx.moveTo(x - s, y); ctx.lineTo(x + s, y);
+        ctx.moveTo(x, y - s); ctx.lineTo(x, y + s);
+        ctx.stroke();
     });
 
-    // Отрисовка ссылки (глава:стих)
-    ctx.fillStyle = '#c5a059';
-    ctx.font = '55px "OrthodoxFont"';
-    ctx.fillText(ref.toUpperCase(), 540, currentY + 60);
-    
+    // 3. Текст
+    const cleanText = text.replace(/[«»""'']/g, '').trim();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Подбор размера шрифта в зависимости от длины текста
+    let fontSize = cleanText.length > 200 ? 45 : 55;
+    ctx.font = `${fontSize}px "OrthodoxFont"`;
+    ctx.fillStyle = '#2C2C2C'; // Глубокий серый (почти черный), легче читается
+
+    const wrapText = (t, maxWidth) => {
+        let words = t.split(' '), lines = [], line = '';
+        words.forEach(w => {
+            if (ctx.measureText(line + w).width < maxWidth) line += w + ' ';
+            else { lines.push(line.trim()); line = w + ' '; }
+        });
+        lines.push(line.trim());
+        return lines;
+    };
+
+    const lines = wrapText(cleanText, 800);
+    const lineHeight = fontSize * 1.5;
+    const totalHeight = lines.length * lineHeight;
+
+    // Центрируем блок текста
+    let startY = 540 - (totalHeight / 2);
+
+    lines.forEach((line, i) => {
+        ctx.fillText(line, 540, startY + (i * lineHeight));
+    });
+
+    // 4. Подпись (Источник)
+    // Рисуем маленькую разделительную линию под текстом
+    const lineY = startY + totalHeight + 40;
+    ctx.beginPath();
+    ctx.strokeStyle = '#D4AF37';
+    ctx.lineWidth = 1;
+    ctx.moveTo(490, lineY);
+    ctx.lineTo(590, lineY);
+    ctx.stroke();
+
+    // Сама ссылка
+    ctx.fillStyle = '#8B7355'; // Цвет темного дерева / сепия
+    ctx.font = 'italic 40px "OrthodoxFont"';
+    ctx.fillText(ref.toUpperCase(), 540, lineY + 80);
+
     return canvas.toBuffer();
 }
+// --- КОНЕЦ ОБНОВЛЕННОГО БЛОКА ---
 
 // --- КЛАВИАТУРЫ ---
 const mainReplyMenu = Markup.keyboard([
@@ -168,10 +199,11 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
 bot.start((ctx) => {
     initUser(ctx.chat.id); saveDB();
     const name = ctx.from.first_name || 'друг';
-    const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\nДобро пожаловать в <b>«Святую Библию»</b>.\n\nЭтот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.\n\n<blockquote>«Слово Твое — светильник ноге моей и свет стезе моей» (Пс. 118:105)</blockquote>`;
+    const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\nДобро пожаловать в <b>«Святую Библию»</b>.\n\nЭтот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
     ctx.replyWithHTML(welcomeText, mainReplyMenu);
 });
 
+// Вернул кнопку Читать Слово
 bot.hears('📖 Читать Слово', (ctx) => {
     ctx.replyWithHTML(`<b>📚 СВЯЩЕННОЕ ПИСАНИЕ</b>\n\nВыберите раздел:`, Markup.inlineKeyboard([[Markup.button.callback('📜 Ветхий Завет', 'test_old'), Markup.button.callback('📖 Новый Завет', 'test_new')]]));
 });
@@ -182,7 +214,29 @@ bot.hears('📅 Календарь', (ctx) => {
 });
 
 bot.hears('🙏 Молитвослов', (ctx) => {
-    ctx.replyWithHTML(`<b>❖ ПРАВОСЛАВНЫЙ МОЛИТВОСЛОВ ❖</b>`, Markup.inlineKeyboard([[Markup.button.webApp('☦︎ Читать молитвослов', 'https://azbyka.ru/molitvoslov/')]]));
+    const text = `<b>❖ ПРАВОСЛАВНЫЙ МОЛИТВОСЛОВ ❖</b>\n` +
+        `<i>Духовный щит и утешение души</i>\n` +
+        `────────────────────\n\n` +
+        `◈ <b>ОСНОВНЫЕ ПРАВИЛА</b>\n` +
+        `╰ <a href="https://azbyka.ru/molitvoslov/molitvy-utrennie.html">Утреннее правило</a>\n` +
+        `╰ <a href="https://azbyka.ru/molitvoslov/molitvy-na-son-gryadushhim.html">Молитвы на сон грядущим</a>\n\n` +
+        `◈ <b>ТАИНСТВА</b>\n` +
+        `╰ <a href="https://azbyka.ru/molitvoslov/posledovanie-ko-svyatomu-prichashheniyu.html">Ко Святому Причащению</a>\n` +
+        `╰ <a href="https://azbyka.ru/molitvoslov/blagodarstvennye-molitvy-po-svyatom-prichashhenii.html">Благодарственные молитвы</a>\n\n` +
+        `────────────────────\n` +
+        `📖 <a href="https://azbyka.ru/molitvoslov/"><b>ПОЛНЫЙ СБОРНИК МОЛИТВ</b></a>`;
+
+    ctx.replyWithHTML(text, {
+        link_preview_options: {
+            url: 'https://azbyka.ru/molitvoslov/',
+            is_disabled: false,
+            prefer_large_media: true
+        },
+        ...Markup.inlineKeyboard([
+            [Markup.button.webApp('☦︎ Читать полный молитвослов', 'https://azbyka.ru/molitvoslov/')],
+            [Markup.button.callback('🏠 В главное меню', 'start_over')]
+        ])
+    });
 });
 
 bot.hears('🎲 Стих дня', (ctx) => {
@@ -205,16 +259,60 @@ bot.hears('🔖 Закладка', (ctx) => {
     ctx.replyWithHTML(`<b>🔖 Закладок пока нет.</b>`);
 });
 
-bot.hears('🔍 Поиск', (ctx) => ctx.replyWithHTML(`<b>🔎 ПОИСК</b>\n\nВведите фразу для поиска:`));
+bot.hears('🔍 Поиск', (ctx) => {
+    const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
+        `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
+        `────────────────────\n\n` +
+        `Введите ключевое слово или фразу, которую вы хотите найти в Библии.\n\n` +
+        `<b>Например:</b> <i>любовь, вера, заповедь</i>\n\n` +
+        `🕊 <b>Просто отправьте слово в ответ на это сообщение:</b>`;
 
-bot.on('text', (ctx) => {
-    const q = ctx.message.text.toLowerCase(); if (q.length < 3) return;
+    ctx.replyWithHTML(searchText, Markup.inlineKeyboard([
+        [Markup.button.callback('🏠 В главное меню', 'start_over')]
+    ]));
+});
+
+bot.on('text', async (ctx) => {
+    const q = ctx.message.text.toLowerCase();
+    if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
+
     let results = [];
-    outer: for (const b of bibleData) for (const c of b.Chapters) for (const v of c.Verses) { if (v.Text.toLowerCase().includes(q)) { results.push({ bId: b.BookId, cId: c.ChapterId, ref: `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`, text: v.Text }); } if (results.length >= 5) break outer; }
-    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено.</b>");
-    let txt = `🔎 <b>РЕЗУЛЬТАТЫ:</b>\n\n`;
-    let btns = results.map((r, i) => { txt += `<b>${i + 1}. ${r.ref}</b>\n${r.text}\n\n`; return Markup.button.callback(`${i + 1} 📖`, `read_new_${r.bId}_${r.cId}`); });
-    ctx.replyWithHTML(txt, Markup.inlineKeyboard([btns]));
+    outer: for (const b of bibleData) {
+        for (const c of b.Chapters) {
+            for (const v of c.Verses) {
+                if (v.Text.toLowerCase().includes(q)) {
+                    results.push({
+                        bId: b.BookId,
+                        cId: c.ChapterId,
+                        vId: v.VerseId,
+                        ref: `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`,
+                        text: v.Text
+                    });
+                }
+                if (results.length >= 5) break outer;
+            }
+        }
+    }
+
+    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+
+    let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
+    responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
+    responseText += `────────────────────\n\n`;
+
+    const buttons = [];
+    results.forEach((res, index) => {
+        const itemNumber = index + 1;
+        responseText += `<b>${itemNumber}. ${res.ref}</b>\n`;
+        responseText += `<blockquote>${res.text}</blockquote>\n`;
+        buttons.push([
+            Markup.button.callback(`${itemNumber} 📖 Читать`, `read_new_${res.bId}_${res.cId}`),
+            Markup.button.callback(`${itemNumber} 🖼 Открытка`, `pic_${res.bId}_${res.cId}_${res.vId}`)
+        ]);
+    });
+
+    responseText += `🕊 <i>Выберите номер стиха ниже для действий:</i>`;
+    await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
 // --- CALLBACK ACTIONS ---
@@ -267,9 +365,7 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
 
-// Запуск
 bot.launch().then(() => console.log('☦️ Бот запущен'));
 
-// Мягкое выключение
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
