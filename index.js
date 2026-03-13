@@ -56,6 +56,39 @@ const PSALMS_CATEGORIES = [
     { name: 'О мире душевном', psalms: [22, 26, 36, 61] }
 ];
 
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+// Функция для генерации ссылок на толкования (Ekzeget.ru)
+function getInterpretationLink(bId, cId) {
+    // Карта соответствия ID книги из bible.json и порядкового номера в Толковой Библии Лопухина
+    const lopuhinMap = {
+        // ВЕТХИЙ ЗАВЕТ
+        1: "01", 2: "02", 3: "03", 4: "04", 5: "05", 6: "06", 7: "07", 8: "08",
+        9: "09", 10: "10", 11: "11", 12: "12", 13: "13", 14: "14", 15: "15", 16: "16",
+        17: "17", 18: "18", 19: "19", 20: "20", 21: "21", 22: "22", 23: "23", 24: "24",
+        25: "25", 26: "26", 27: "27", 28: "28", 29: "29", 30: "30", 31: "31", 32: "32",
+        33: "33", 34: "34", 35: "35", 36: "36", 37: "37", 38: "38", 39: "39",
+
+        // НОВЫЙ ЗАВЕТ
+        40: "51", 41: "52", 42: "53", 43: "54", 44: "55", // Евангелия и Деяния
+        52: "56", 53: "57", 54: "58", 55: "59", 56: "60", 57: "61", 58: "62", // Послания Павла
+        59: "63", 60: "64", 61: "74", 62: "75", 63: "76", 64: "77", 65: "72", // Послания Павла (продолжение)
+        45: "65", 46: "66", 47: "67", 48: "68", 49: "69", 50: "70", 51: "71", // Соборные послания
+        66: "73" // Апокалипсис
+    };
+
+    const bookNum = lopuhinMap[Number(bId)];
+
+    if (!bookNum) {
+        // Если ID не найден, ведем на общий корень
+        return "https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/";
+    }
+
+    // Формируем ссылку: https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_XX/YY
+    // Где XX — номер книги, YY — номер главы
+    return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_${bookNum}/${cId}`;
+}
+
 // --- КАЛЕНДАРЬ ---
 function getOrthodoxPascha(year) {
     const a = year % 19, b = year % 4, c = year % 7;
@@ -71,37 +104,22 @@ function getDetailedCalendar() {
     const dayW = now.getDay();
     const pascha = getOrthodoxPascha(y);
     const diff = Math.floor((now - pascha) / 86400000);
-    
-    // Исправлено: добавлены обратные кавычки для шаблонной строки
     const azLink = `https://azbyka.ru/days/${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
     let fast = "Поста нет (мясоед) 🍖";
     let event = "Рядовой день";
 
-    if (diff >= -48 && diff < 0) { 
-        event = "Великий пост 🏺"; 
-        fast = "Святая Четыредесятница"; 
-    }
-    else if (diff === 0) { 
-        event = "✨ ПАСХА ХРИСТОВА ✨"; 
-        fast = "Поста нет"; 
-    }
-    else if (diff > 0 && diff <= 7) { 
-        event = "Светлая седмица 🕊"; 
-        fast = "Сплошная седмица"; 
-    }
-    else if (dayW === 3 || dayW === 5) { 
-        fast = "Постный день (среда/пятница) 🥣"; 
-    }
+    if (diff >= -48 && diff < 0) { event = "Великий пост 🏺"; fast = "Святая Четыредесятница"; }
+    else if (diff === 0) { event = "✨ ПАСХА ХРИСТОВА ✨"; fast = "Поста нет"; }
+    else if (diff > 0 && diff <= 7) { event = "Светлая седмица 🕊"; fast = "Сплошная седмица"; }
+    else if (dayW === 3 || dayW === 5) { fast = "Постный день (среда/пятница) 🥣"; }
 
     return {
-        // Исправлено: весь текст обернут в обратные кавычки
         text: `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n` +
               `<i>${now.toLocaleDateString('ru-RU')} (нового стиля)</i>\n` +
               `────────────────────\n\n` +
               `<b>🕯 Событие:</b> ${event}\n` +
               `<b>🥗 Трапеза:</b> ${fast}\n\n` +
-              `Сегодня Церковь молитвенно чтит память многих святых и подвижников веры.\n\n` +
               `📖 <a href="${azLink}">Жития, иконы и чтения на Азбуке</a>`,
         link: azLink
     };
@@ -165,7 +183,13 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     if (cId > 1) nav.push(Markup.button.callback('⬅️ Пред.', `read_${bId}_${cId - 1}`));
     nav.push(Markup.button.callback('📜 К главам', `bk_${bId}`));
     if (cId < book.Chapters.length) nav.push(Markup.button.callback('След. ➡️', `read_${bId}_${cId + 1}`));
-    const kb = Markup.inlineKeyboard([nav, [Markup.button.callback('🏠 К разделам', 'start_over')]]);
+    
+    const kb = Markup.inlineKeyboard([
+        nav, 
+        [Markup.button.url('🎓 Толкования святых отцов', getInterpretationLink(bId, cId))],
+        [Markup.button.callback('🏠 К разделам', 'start_over')]
+    ]);
+
     const final = text.substring(0, 4090);
     try { if (isEdit) await ctx.editMessageText(final, { parse_mode: 'HTML', ...kb }); else await ctx.replyWithHTML(final, kb); } catch (e) { await ctx.replyWithHTML(final, kb); }
 }
@@ -255,10 +279,8 @@ bot.hears('Поиск', (ctx) => {
 
 bot.on('text', async (ctx) => {
     const q = ctx.message.text.toLowerCase();
-    // Проверка, что это не команда из меню (чтобы поиск не срабатывал на нажатие кнопок)
     const menuButtons = ['Чтение писания', 'Стих дня', 'Календарь', 'Молитвослов', 'Псалтирь', 'Закладка', 'Поиск'];
     if (menuButtons.includes(ctx.message.text)) return;
-
     if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
 
     let results = [];
@@ -290,11 +312,7 @@ bot.on('text', async (ctx) => {
         const itemNumber = index + 1;
         responseText += `<b>${itemNumber}. ${res.ref}</b>\n`;
         responseText += `<blockquote>${res.text}</blockquote>\n`;
-        
-        // Оставляем только кнопку "Читать"
-        buttons.push([
-            Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)
-        ]);
+        buttons.push([Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)]);
     });
 
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
@@ -348,3 +366,6 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
 });
 
 bot.launch().then(() => console.log('☦️ Бот запущен'));
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
