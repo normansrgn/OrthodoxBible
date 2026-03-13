@@ -92,12 +92,20 @@ function getDetailedCalendar() {
 async function createVerseCard(text, ref) {
     const canvas = createCanvas(1080, 1080);
     const ctx = canvas.getContext('2d');
+    
+    // Фон и рамка
     const grad = ctx.createLinearGradient(0, 0, 1080, 1080);
-    grad.addColorStop(0, '#1a1a1a'); grad.addColorStop(1, '#2c2c2c');
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, 1080, 1080);
-    ctx.strokeStyle = '#c5a059'; ctx.lineWidth = 20; ctx.strokeRect(50, 50, 980, 980);
+    grad.addColorStop(0, '#1a1a1a'); 
+    grad.addColorStop(1, '#2c2c2c');
+    ctx.fillStyle = grad; 
+    ctx.fillRect(0, 0, 1080, 1080);
+    ctx.strokeStyle = '#c5a059'; 
+    ctx.lineWidth = 20; 
+    ctx.strokeRect(50, 50, 980, 980);
 
-    // ВАЖНО: шрифт указываем без 'bold/italic', так как кастомный шрифт регистрируется как есть
+    // Подготовка текста (убираем все виды кавычек, так как в шрифте их нет)
+    const cleanText = text.replace(/[«»""'']/g, '').trim();
+
     ctx.fillStyle = '#f4e7d3';
     ctx.textAlign = 'center';
     ctx.font = '50px "OrthodoxFont"'; 
@@ -106,18 +114,27 @@ async function createVerseCard(text, ref) {
         let words = t.split(' '), lines = [], line = '';
         words.forEach(w => { 
             if (ctx.measureText(line + w).width < 800) line += w + ' '; 
-            else { lines.push(line); line = w + ' '; } 
+            else { lines.push(line.trim()); line = w + ' '; } 
         });
-        lines.push(line); return lines;
+        lines.push(line.trim()); 
+        return lines;
     };
     
-    const lines = wrapText(`«${text}»`);
-    const startY = 540 - (lines.length * 45);
-    lines.forEach((l, i) => ctx.fillText(l.trim(), 540, startY + (i * 90)));
+    const lines = wrapText(cleanText);
+    // Вычисляем начальную точку Y, чтобы текст был ровно по центру
+    const lineHeight = 90;
+    const totalHeight = lines.length * lineHeight;
+    let currentY = 540 - (totalHeight / 2) + 40; 
 
+    lines.forEach((l) => {
+        ctx.fillText(l, 540, currentY);
+        currentY += lineHeight;
+    });
+
+    // Отрисовка ссылки (глава:стих)
     ctx.fillStyle = '#c5a059';
     ctx.font = '55px "OrthodoxFont"';
-    ctx.fillText(ref.toUpperCase(), 540, startY + (lines.length * 90) + 100);
+    ctx.fillText(ref.toUpperCase(), 540, currentY + 60);
     
     return canvas.toBuffer();
 }
