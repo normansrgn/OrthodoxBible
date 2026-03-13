@@ -13,6 +13,7 @@ yarn-error.log*
 
 # База данных (локальный файл, чтобы не затирать его при деплое)
 users_data.json
+users.json
 
 # Логи и кэш
 logs
