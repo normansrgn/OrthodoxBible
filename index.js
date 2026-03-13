@@ -17,7 +17,9 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-const token = process.env.BOT_TOKEN;
+// const token = process.env.BOT_TOKEN;
+
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 
 const bot = new Telegraf(token);
@@ -263,7 +265,7 @@ bot.hears('📜 Закон Божий', (ctx) => {
             prefer_large_media: true
         },
         ...Markup.inlineKeyboard([
-            [Markup.button.webApp('☦️ Читать полный Закон Божий', 'https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/')],
+            [Markup.button.url('☦️ Читать полный Закон Божий', 'https://azbyka.ru/otechnik/Serafim_Slobodskoj/zakon-bozhij/')],
             [Markup.button.callback('🏠 В главное меню', 'start_over')]
         ])
     });
@@ -321,7 +323,7 @@ bot.hears('Молитвослов', (ctx) => {
             prefer_large_media: true
         },
         ...Markup.inlineKeyboard([
-            [Markup.button.webApp('☦️ Читать полный молитвослов', 'https://azbyka.ru/molitvoslov/')],
+            [Markup.button.url('☦️ Читать полный молитвослов', 'https://azbyka.ru/molitvoslov/')],
             [Markup.button.callback('🏠 В главное меню', 'start_over')]
         ])
     });
