@@ -165,7 +165,7 @@ async function createVerseCard(text, ref) {
 
 // --- КЛАВИАТУРЫ ---
 const mainReplyMenu = Markup.keyboard([
-    ['Чтение писания', 'Стих дня'],
+    ['Чтение писания', 'Случайный стих'],
     ['Календарь', 'Молитвослов'],
     ['Псалтирь', 'Закладка'],
     ['Поиск']
@@ -244,7 +244,7 @@ bot.hears('Молитвослов', (ctx) => {
     });
 });
 
-bot.hears('Стих дня', (ctx) => {
+bot.hears('Случайный стих', (ctx) => {
     if (!bibleData.length) return;
     const b = bibleData[Math.floor(Math.random() * bibleData.length)];
     const c = b.Chapters[Math.floor(Math.random() * b.Chapters.length)];
