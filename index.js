@@ -226,7 +226,7 @@ bot.hears('Стих дня', (ctx) => {
     const c = b.Chapters[Math.floor(Math.random() * b.Chapters.length)];
     const v = c.Verses[Math.floor(Math.random() * c.Verses.length)];
     const ref = `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`;
-    ctx.replyWithHTML(`<b>🎲 ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${v.Text}</blockquote>\n\n📍 <b>${ref}</b>`, Markup.inlineKeyboard([[Markup.button.callback('🖼 Создать открытку', `pic_${b.BookId}_${c.ChapterId}_${v.VerseId}`)], [Markup.button.callback('📖 К главе', `read_new_${b.BookId}_${c.ChapterId}`)]]));
+    ctx.replyWithHTML(`<b>ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${v.Text}</blockquote>\n\n📍 <b>${ref}</b>`, Markup.inlineKeyboard([[Markup.button.callback('🖼 Создать открытку', `pic_${b.BookId}_${c.ChapterId}_${v.VerseId}`)], [Markup.button.callback('📖 К главе', `read_new_${b.BookId}_${c.ChapterId}`)]]));
 });
 
 bot.hears('Псалтирь', (ctx) => {
