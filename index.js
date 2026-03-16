@@ -1,3 +1,4 @@
+const schedule = require('node-schedule');
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 const { createCanvas, registerFont } = require('canvas');
@@ -18,10 +19,15 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-const token = process.env.BOT_TOKEN;
 
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
+// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+
+if (!token) {
+    console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
+    process.exit(1);
+}
 
 const bot = new Telegraf(token);
 const DATA_FILE = './users_data.json';
@@ -350,12 +356,12 @@ async function getDetailedCalendar() {
     const month = now.getMonth() + 1;
     const day = now.getDate();
     const weekday = WEEKDAYS[now.getDay()];
-    const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     let saints = [];
     try {
         const data = await new Promise((resolve, reject) => {
-            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
                 let raw = '';
                 res.on('data', chunk => raw += chunk);
@@ -405,7 +411,7 @@ async function getDetailedCalendar() {
     const fasting = getFastingInfo(now, getOrthodoxPaschaDate(year));
     // Формируем текст
     let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
-    text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth()+1).padStart(2,'0')}, Новый стиль: ${day}.${String(month).padStart(2,'0')} (${weekday})</i>\n`;
+    text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${String(month).padStart(2, '0')} (${weekday})</i>\n`;
     text += `────────────────────\n\n`;
     text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
     text += `<b>Период:</b> ${fasting.period}\n`;
@@ -559,13 +565,10 @@ bot.hears('Чтение писания', (ctx) => {
     ctx.replyWithHTML(`<b>📚 СВЯЩЕННОЕ ПИСАНИЕ</b>\n\nВыберите раздел:`, Markup.inlineKeyboard([[Markup.button.callback('📜 Ветхий Завет', 'test_old'), Markup.button.callback('📖 Новый Завет', 'test_new')]]));
 });
 
+// --- Динамический календарь с кнопками Вчера/Завтра ---
 bot.hears('Календарь', async (ctx) => {
-    const cal = await getDetailedCalendar();
-
-    ctx.replyWithHTML(cal.text, Markup.inlineKeyboard([
-        [Markup.button.url('☦️ Открыть Азбуку Веры', cal.link)],
-        [Markup.button.callback('🏠 В главное меню', 'start_over')]
-    ]));
+    const now = new Date();
+    await sendDynamicCalendar(ctx, now);
 });
 
 bot.hears('Молитвослов', (ctx) => {
@@ -658,7 +661,7 @@ bot.hears('Поиск', (ctx) => {
 
 bot.on('text', async (ctx) => {
     const q = ctx.message.text.toLowerCase();
-    const menuButtons = ['📖 Библия', '📜 Закон Божий', '🙏 Молитвы', '📅 Календарь', '🔎 Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
+    const menuButtons = ['📖 Библия', '📜 Закон Божий', 'Молитвослов', 'Календарь', 'Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
     if (menuButtons.includes(ctx.message.text)) return;
     if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
 
@@ -745,8 +748,249 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
 });
 
 bot.telegram.deleteWebhook().then(() => {
-    bot.launch().then(() => console.log('☦️ Бот запущен'));
+    bot.launch().then(async () => {
+        console.log('☦️ Бот запущен');
+        // Тестовый однократный запуск задач при старте
+        await runScheduledTasksNow();
+    });
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+
+// --- SCHEDULED TASKS ---
+async function runScheduledTasksNow() {
+    console.log('▶️ Запуск всех отложенных задач сразу после старта бота для проверки…');
+    try {
+        await sendTheophanMessage();
+        console.log('✅ sendTheophanMessage отработала (если был текст на сегодня).');
+    } catch (e) {
+        console.error('❌ Ошибка в sendTheophanMessage при ручном запуске:', e);
+    }
+
+    try {
+        await sendDailyNewsMessage();
+        console.log('✅ sendDailyNewsMessage отработала (если новости были получены).');
+    } catch (e) {
+        console.error('❌ Ошибка в sendDailyNewsMessage при ручном запуске:', e);
+    }
+
+    try {
+        await sendHolidayReminderMessage();
+        console.log('✅ sendHolidayReminderMessage отработала (если были праздники/святые).');
+    } catch (e) {
+        console.error('❌ Ошибка в sendHolidayReminderMessage при ручном запуске:', e);
+    }
+
+    console.log('⏹ Ручной запуск всех отложенных задач завершён.');
+}
+
+/**
+ * Отправляет мысль дня свт. Феофана Затворника всем пользователям из базы.
+ * Получает HTML от API, разворачивает все теги кроме разрешённых (<a>, <b>, <i>, <u>, <s>, <code>, <pre>),
+ * декодирует HTML entities, формирует сообщение с заголовком, датой и содержимым блока <blockquote>,
+ * и отправляет всем пользователям.
+ */
+async function sendTheophanMessage() {
+    // 1. Формируем дату и URL API
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
+    const url = `https://azbyka.ru/days/api/thoughts-st-theophan/${dateStr}.json`;
+
+    // 2. Получаем мысль дня через API
+    let apiData = null;
+    await new Promise((resolve) => {
+        https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+            let raw = '';
+            res.on('data', chunk => raw += chunk);
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    apiData = null;
+                    return resolve();
+                }
+                try {
+                    apiData = JSON.parse(raw);
+                } catch (e) {
+                    apiData = null;
+                }
+                resolve();
+            });
+        }).on('error', () => resolve());
+    });
+
+    // 3. Если мысли нет — ничего не отправляем
+    if (!apiData || !apiData.text || typeof apiData.text !== 'string' || !apiData.text.trim()) {
+        return;
+    }
+
+    // 4. Декодируем HTML entities (например, &laquo;, &raquo;, &mdash; и др.)
+    // Используем пакет 'he' для декодирования
+    const he = require('he');
+    let htmlText = he.decode(apiData.text);
+
+    // 5. Очищаем HTML, оставляя только разрешённые теги (<a>, <b>, <i>, <u>, <s>, <code>, <pre>)
+    // и разворачиваем все остальные, сохраняя вложенный текст
+    const cheerio = require('cheerio');
+    // Разрешённые теги Telegram
+    const allowedTags = ['a', 'b', 'i', 'u', 's', 'code', 'pre'];
+    // Загружаем HTML в Cheerio
+    const $ = cheerio.load(`<div>${htmlText}</div>`, { decodeEntities: false });
+
+    /**
+     * Рекурсивно разворачивает все теги, кроме разрешённых, сохраняя вложенный текст и разрешённые теги.
+     * @param {CheerioElement} el
+     * @returns {string}
+     */
+    function cleanNode(el) {
+        // Текстовый узел
+        if (el.type === 'text') {
+            return el.data;
+        }
+        // Разрешённый тег
+        if (el.type === 'tag' && allowedTags.includes(el.name)) {
+            let inner = '';
+            if (el.children && el.children.length) {
+                inner = el.children.map(child => cleanNode(child)).join('');
+            }
+            // Формируем тег с атрибутами (только href для <a>)
+            if (el.name === 'a' && el.attribs && el.attribs.href) {
+                // Безопасно экранируем href
+                let href = el.attribs.href.replace(/"/g, '&quot;');
+                return `<a href="${href}">${inner}</a>`;
+            }
+            return `<${el.name}>${inner}</${el.name}>`;
+        }
+        // Все остальные теги разворачиваем, просто возвращаем содержимое
+        if (el.children && el.children.length) {
+            return el.children.map(child => cleanNode(child)).join('');
+        }
+        return '';
+    }
+
+    // Получаем содержимое <blockquote> (или всего текста, если блока нет)
+    let blockContent = '';
+    // Ищем первый блок <blockquote>
+    const block = $('blockquote').first();
+    if (block.length) {
+        blockContent = block.contents().map((_, el) => cleanNode(el)).get().join('');
+    } else {
+        // Если нет <blockquote>, берем весь текст
+        blockContent = $('div').contents().map((_, el) => cleanNode(el)).get().join('');
+    }
+    // Удаляем лишние подряд идущие переносы строк
+    blockContent = blockContent.replace(/\n{3,}/g, '\n\n').trim();
+
+    // 6. Формируем сообщение с заголовком и содержимым (без даты)
+    const message =
+        `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
+        `<blockquote>${blockContent}</blockquote>`;
+
+    // 7. Рассылаем всем пользователям из базы
+    for (const id of Object.keys(db)) {
+        try {
+            await bot.telegram.sendMessage(id, message, {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            });
+        } catch (e) {
+            // Игнорируем ошибки отправки отдельным пользователям
+        }
+    }
+}
+
+// Каждый день в 11:00 по серверному времени
+schedule.scheduleJob('49 18 * * *', sendTheophanMessage);
+
+
+// Динамический календарь с кнопками «Вчера»/«Завтра»
+bot.hears('Календарь', async (ctx) => {
+    const now = new Date();
+    await sendDynamicCalendar(ctx, now);
+});
+
+bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
+    let dateStr = ctx.match[2];
+    let date = new Date(dateStr);
+    if (ctx.match[1] === 'prev') date.setDate(date.getDate() - 1);
+    else date.setDate(date.getDate() + 1);
+    await sendDynamicCalendar(ctx, date, true);
+});
+
+async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const weekday = WEEKDAYS[dateObj.getDay()];
+    const azLink = `https://azbyka.ru/days/${year}-${month}-${day}`;
+
+    // Получаем святых дня через API
+    let saints = [];
+    try {
+        const data = await new Promise((resolve) => {
+            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${month}-${day}`;
+            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+                let raw = '';
+                res.on('data', chunk => raw += chunk);
+                res.on('end', () => {
+                    try { resolve(JSON.parse(raw)); } catch (e) { resolve(null); }
+                });
+            }).on('error', () => resolve(null));
+        });
+
+        if (data && data.presentations) {
+            const $ = cheerio.load(data.presentations, { decodeEntities: false });
+            const arr = [];
+            $('img, table, tbody, tr, td, th, style, script, iframe, object, embed, form, input, button, video, audio, figure, figcaption').remove();
+            $('a').each((i, el) => {
+                const name = $(el).text().trim();
+                const href = $(el).attr('href');
+                if (name) {
+                    if (href && /^https?:\/\/azbyka\.ru/.test(href)) arr.push(`• <a href="${href}">${name}</a>`);
+                    else if (href && href.startsWith('/')) arr.push(`• <a href="https://azbyka.ru${href}">${name}</a>`);
+                    else arr.push(`• ${name}`);
+                }
+            });
+            if (arr.length) saints = arr;
+        }
+    } catch (e) { saints = []; }
+
+    if (!saints.length) saints = getSaintsForDate(dateObj.getMonth() + 1, dateObj.getDate()).map(s => `• ${s}`);
+
+    const oldStyle = getOldStyleDate(dateObj);
+    const fasting = getFastingInfo(dateObj, getOrthodoxPaschaDate(year));
+
+    let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
+    text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${month} (${weekday})</i>\n`;
+    text += `────────────────────\n\n`;
+    text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
+    text += `<b>Период:</b> ${fasting.period}\n`;
+    text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
+    text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
+    text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
+
+    const prevDate = new Date(dateObj);
+    prevDate.setDate(dateObj.getDate() - 1);
+    const nextDate = new Date(dateObj);
+    nextDate.setDate(dateObj.getDate() + 1);
+
+    const prevStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
+    const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
+
+    const kb = Markup.inlineKeyboard([
+        [
+            Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
+            Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
+        ],
+        [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
+        [Markup.button.callback('🏠 В главное меню', 'start_over')]
+    ]);
+
+    if (isEdit && ctx.editMessageText) await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+    else await ctx.replyWithHTML(text, kb);
+}
+
+
