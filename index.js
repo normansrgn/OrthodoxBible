@@ -477,7 +477,9 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
 
-bot.launch().then(() => console.log('☦️ Бот запущен'));
+bot.telegram.deleteWebhook().then(() => {
+    bot.launch().then(() => console.log('☦️ Бот запущен'));
+});
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
