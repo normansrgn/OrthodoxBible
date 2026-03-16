@@ -38,6 +38,8 @@ const DATA_FILE = './users_data.json';
 
 // --- БАЗА ДАННЫХ ---
 let db = {};
+// Объект для хранения состояния поиска по пользователям
+const searchMode = {};
 const loadDB = () => {
     if (fs.existsSync(DATA_FILE)) {
         try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
@@ -615,6 +617,7 @@ bot.hears('Закладка', (ctx) => {
 });
 
 bot.hears('Поиск', (ctx) => {
+    searchMode[ctx.chat.id] = true; // включаем режим поиска для этого пользователя
     const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
         `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
         `────────────────────\n\n` +
@@ -628,11 +631,10 @@ bot.hears('Поиск', (ctx) => {
 });
 
 bot.on('text', async (ctx) => {
-    const q = ctx.message.text.toLowerCase();
+    // Если пользователь не в режиме поиска, выходим
+    if (!searchMode[ctx.chat.id]) return;
 
-    // --- обработка поиска по Библии ---
-    const menuButtons = ['📖 Библия', '📜 Закон Божий', 'Молитвослов', 'Календарь', 'Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
-    if (menuButtons.includes(ctx.message.text)) return;
+    const q = ctx.message.text.toLowerCase();
     if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
 
     let results = [];
@@ -653,7 +655,11 @@ bot.on('text', async (ctx) => {
         }
     }
 
-    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+    if (!results.length) {
+        ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+        searchMode[ctx.chat.id] = false; // отключаем режим поиска после ответа
+        return;
+    }
 
     let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
     responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
@@ -668,6 +674,8 @@ bot.on('text', async (ctx) => {
     });
 
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
+    
+    searchMode[ctx.chat.id] = false; // отключаем режим поиска после ответа
 });
 
 // --- CALLBACK ACTIONS ---
