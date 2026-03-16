@@ -2,6 +2,7 @@ const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
+const https = require('https');
 
 // --- НАСТРОЙКА ШРИФТА ---
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
@@ -127,31 +128,296 @@ function getOrthodoxPascha(year) {
     return f <= 9 ? new Date(year, 3, 22 + f + 13) : new Date(year, 4, f - 9 + 13);
 }
 
-function getDetailedCalendar() {
+// Локальный массив с примерами памятей святых (можно расширить)
+const ORTHODOX_CALENDAR = [
+    // Пример: 7 января, Рождество Христово
+    { month: 1, day: 7, saints: ['Рождество Господа Бога и Спаса нашего Иисуса Христа'] },
+    { month: 1, day: 19, saints: ['Святое Богоявление (Крещение Господне)'] },
+    { month: 4, day: 7, saints: ['Благовещение Пресвятой Богородицы'] },
+    { month: 8, day: 19, saints: ['Преображение Господне'] },
+    { month: 8, day: 28, saints: ['Успение Пресвятой Богородицы'] },
+    { month: 9, day: 21, saints: ['Рождество Пресвятой Богородицы'] },
+    { month: 9, day: 27, saints: ['Воздвижение Честного и Животворящего Креста Господня'] },
+    { month: 12, day: 4, saints: ['Введение во храм Пресвятой Богородицы'] },
+    // ... можно добавить больше памятей
+];
+
+// Вычисление даты Пасхи (православная Пасха, алгоритм для Юлианского календаря, сдвиг на 13 дней для Григорианского)
+function getOrthodoxPaschaDate(year) {
+    // Алгоритм Остроградского (Meeus/Jones/Butcher)
+    const a = year % 19;
+    const b = year % 4;
+    const c = year % 7;
+    const d = (19 * a + 15) % 30;
+    const e = (2 * b + 4 * c + 6 * d + 6) % 7;
+    const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e)); // март (2) + дни
+    // Переводим в григорианский календарь (добавляем 13 дней для XXI века)
+    julianPascha.setUTCDate(julianPascha.getUTCDate() + 13);
+    return new Date(julianPascha.getUTCFullYear(), julianPascha.getUTCMonth(), julianPascha.getUTCDate());
+}
+
+// Определение дня недели
+const WEEKDAYS = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+
+// Определение седмицы, постов, трапезы и периода
+function getFastingInfo(date, paschaDate) {
+    // Великий пост: за 48 дней до Пасхи (Чистый понедельник), 7 недель
+    const greatLentStart = new Date(paschaDate);
+    greatLentStart.setDate(greatLentStart.getDate() - 48);
+    const greatLentEnd = new Date(paschaDate);
+    greatLentEnd.setDate(greatLentEnd.getDate() - 2); // до Великой субботы
+
+    // Строгий пост: среда и пятница (кроме сплошных седмиц и праздничных дней)
+    // Петров пост: от понедельника через неделю после Троицы до 12 июля (Петра и Павла)
+    const pentecost = new Date(paschaDate);
+    pentecost.setDate(paschaDate.getDate() + 49);
+    const petrovPostStart = new Date(pentecost);
+    petrovPostStart.setDate(pentecost.getDate() + 1);
+    const petrovPostEnd = new Date(date.getFullYear(), 6, 12); // 12 июля
+
+    // Успенский пост: 14–27 августа
+    const uspenskyPostStart = new Date(date.getFullYear(), 7, 14);
+    const uspenskyPostEnd = new Date(date.getFullYear(), 7, 27);
+
+    // Рождественский пост: 28 ноября – 6 января
+    const christmasFastStart = new Date(date.getFullYear(), 10, 28);
+    const christmasFastEnd = new Date(date.getFullYear() + 1, 0, 6);
+
+    // Сплошные седмицы (нет поста)
+    const svjatkiStart = new Date(date.getFullYear(), 0, 7);
+    const svjatkiEnd = new Date(date.getFullYear(), 0, 17);
+    const maslenitsaStart = new Date(paschaDate);
+    maslenitsaStart.setDate(paschaDate.getDate() - 49);
+    const maslenitsaEnd = new Date(paschaDate);
+    maslenitsaEnd.setDate(paschaDate.getDate() - 42);
+    const radonitsaStart = new Date(paschaDate);
+    radonitsaStart.setDate(paschaDate.getDate() + 8);
+    const radonitsaEnd = new Date(paschaDate);
+    radonitsaEnd.setDate(paschaDate.getDate() + 14);
+
+    // Проверки
+    let fastType = '';
+    let fastText = '';
+    let period = '';
+    let week = '';
+
+    // Пасха
+    if (
+        date.getDate() === paschaDate.getDate() &&
+        date.getMonth() === paschaDate.getMonth()
+    ) {
+        period = 'Светлое Христово Воскресение (Пасха)';
+        week = 'Светлая седмица';
+        fastType = 'Поста нет';
+        fastText = 'Пасха – поста нет';
+        return { period, week, fastType, fastText };
+    }
+
+    // Светлая седмица
+    const svWeekStart = new Date(paschaDate);
+    const svWeekEnd = new Date(paschaDate);
+    svWeekEnd.setDate(paschaDate.getDate() + 6);
+    if (date >= svWeekStart && date <= svWeekEnd) {
+        period = 'Светлая седмица';
+        week = 'Светлая седмица';
+        fastType = 'Поста нет';
+        fastText = 'Пасха – поста нет';
+        return { period, week, fastType, fastText };
+    }
+
+    // Великий пост
+    if (date >= greatLentStart && date <= greatLentEnd) {
+        period = 'Великий пост';
+        // Номер седмицы Великого поста
+        const daysFromStart = Math.floor((date - greatLentStart) / (1000 * 60 * 60 * 24));
+        const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
+        week = `${sedmitsaNum}-я седмица Великого поста`;
+        // Постная трапеза
+        if (date.getDay() === 0) {
+            fastType = 'Послабление в пище (воскресенье)';
+            fastText = 'Разрешается растительное масло, вино';
+        } else if (date.getDay() === 6) {
+            fastType = 'Строгий пост (суббота)';
+            fastText = 'Разрешается растительное масло, вино';
+        } else {
+            fastType = 'Строгий пост';
+            fastText = 'Пища без масла';
+        }
+        return { period, week, fastType, fastText };
+    }
+
+    // Петров пост
+    if (petrovPostStart <= date && date <= petrovPostEnd) {
+        period = 'Петров пост';
+        // Считаем седмицу от начала поста
+        const daysFromStart = Math.floor((date - petrovPostStart) / (1000 * 60 * 60 * 24));
+        const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
+        week = `${sedmitsaNum}-я седмица Петрова поста`;
+        // Постная трапеза
+        if (date.getDay() === 0 || date.getDay() === 6) {
+            fastType = 'Послабление в пище (сб/вс)';
+            fastText = 'Разрешается рыба, растительное масло, вино';
+        } else {
+            fastType = 'Пост';
+            fastText = 'Пища без мяса, молока, яиц';
+        }
+        return { period, week, fastType, fastText };
+    }
+
+    // Успенский пост
+    if (uspenskyPostStart <= date && date <= uspenskyPostEnd) {
+        period = 'Успенский пост';
+        const daysFromStart = Math.floor((date - uspenskyPostStart) / (1000 * 60 * 60 * 24));
+        const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
+        week = `${sedmitsaNum}-я седмица Успенского поста`;
+        if (date.getDay() === 0 || date.getDay() === 6) {
+            fastType = 'Послабление в пище (сб/вс)';
+            fastText = 'Разрешается растительное масло';
+        } else {
+            fastType = 'Строгий пост';
+            fastText = 'Пища без масла';
+        }
+        return { period, week, fastType, fastText };
+    }
+
+    // Рождественский пост
+    if ((date >= christmasFastStart && date.getMonth() === 10) || (date <= christmasFastEnd && date.getMonth() === 0)) {
+        period = 'Рождественский пост';
+        // Номер седмицы считаем с 28 ноября
+        let start = new Date(date.getFullYear(), 10, 28);
+        if (date.getMonth() === 0) start = new Date(date.getFullYear() - 1, 10, 28);
+        const daysFromStart = Math.floor((date - start) / (1000 * 60 * 60 * 24));
+        const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
+        week = `${sedmitsaNum}-я седмица Рождественского поста`;
+        if (date.getDay() === 0 || date.getDay() === 6) {
+            fastType = 'Послабление в пище (сб/вс)';
+            fastText = 'Разрешается рыба, растительное масло, вино';
+        } else {
+            fastType = 'Пост';
+            fastText = 'Пища без мяса, молока, яиц';
+        }
+        return { period, week, fastType, fastText };
+    }
+
+    // Сплошные седмицы
+    if ((date >= svjatkiStart && date <= svjatkiEnd) ||
+        (date >= maslenitsaStart && date <= maslenitsaEnd) ||
+        (date >= radonitsaStart && date <= radonitsaEnd)) {
+        period = 'Сплошная седмица';
+        week = 'Нет поста';
+        fastType = 'Поста нет';
+        fastText = 'Поста нет';
+        return { period, week, fastType, fastText };
+    }
+
+    // Обычные дни: пост по средам и пятницам
+    if (date.getDay() === 3 || date.getDay() === 5) { // среда (3), пятница (5)
+        period = 'Обычный день';
+        week = 'Постный день';
+        fastType = 'Пост (среда/пятница)';
+        fastText = 'Пища без мяса, молока, яиц';
+        return { period, week, fastType, fastText };
+    }
+
+    // Обычный день, нет поста
+    period = 'Обычный день';
+    week = 'Нет поста';
+    fastType = 'Поста нет';
+    fastText = 'Поста нет';
+    return { period, week, fastType, fastText };
+}
+
+// Старый стиль (юлианский календарь)
+function getOldStyleDate(date) {
+    const oldDate = new Date(date);
+    oldDate.setDate(date.getDate() - 13);
+    return oldDate;
+}
+
+// Получить список святых дня из массива ORTHODOX_CALENDAR (локальный fallback)
+function getSaintsForDate(month, day) {
+    const found = ORTHODOX_CALENDAR.find(x => x.month === month && x.day === day);
+    return found ? found.saints : [];
+}
+
+// Главная функция календаря
+const cheerio = require('cheerio'); // не забудьте npm install cheerio
+
+// Исправленная функция для получения календаря с корректным парсом "Святые дня"
+async function getDetailedCalendar() {
     const now = new Date();
-    const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
-    const dayW = now.getDay();
-    const pascha = getOrthodoxPascha(y);
-    const diff = Math.floor((now - pascha) / 86400000);
-    const azLink = `https://azbyka.ru/days/${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const weekday = WEEKDAYS[now.getDay()];
+    const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
 
-    let fast = "Поста нет (мясоед) 🍖";
-    let event = "Рядовой день";
-
-    if (diff >= -48 && diff < 0) { event = "Великий пост 🏺"; fast = "Святая Четыредесятница"; }
-    else if (diff === 0) { event = "✨ ПАСХА ХРИСТОВА ✨"; fast = "Поста нет"; }
-    else if (diff > 0 && diff <= 7) { event = "Светлая седмица 🕊"; fast = "Сплошная седмица"; }
-    else if (dayW === 3 || dayW === 5) { fast = "Постный день (среда/пятница) 🥣"; }
-
-    return {
-        text: `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n` +
-            `<i>${now.toLocaleDateString('ru-RU')} (нового стиля)</i>\n` +
-            `────────────────────\n\n` +
-            `<b>🕯 Событие:</b> ${event}\n` +
-            `<b>🥗 Трапеза:</b> ${fast}\n\n` +
-            `📖 <a href="${azLink}">Жития, иконы и чтения на Азбуке</a>`,
-        link: azLink
-    };
+    let saints = [];
+    try {
+        const data = await new Promise((resolve, reject) => {
+            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+                let raw = '';
+                res.on('data', chunk => raw += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(raw));
+                    } catch (e) { resolve(null); }
+                });
+            }).on('error', () => resolve(null));
+        });
+        if (data && data.presentations) {
+            // Парсим только список святых, удаляя запрещённые теги Telegram
+            // Оставляем только <a>, <b>, <i>, <u>, <s>, <code>, <pre>, <span>
+            // (но используем только <a> для святых)
+            const $ = cheerio.load(data.presentations, { decodeEntities: false });
+            const arr = [];
+            // Удаляем фото, таблицы, картинки и запрещённые теги
+            $('img, table, tbody, tr, td, th, style, script, iframe, object, embed, form, input, button, video, audio, figure, figcaption').remove();
+            // Собираем только <a> с именами святых
+            $('a').each((i, el) => {
+                // Проверяем, что ссылка не пуста и текст не пустой
+                const name = $(el).text().trim();
+                const href = $(el).attr('href');
+                if (name) {
+                    // Только ссылки на жития (azbyka.ru) или просто имя
+                    if (href && /^https?:\/\/azbyka\.ru/.test(href)) {
+                        arr.push(`• <a href="${href}">${name}</a>`);
+                    } else if (href && href.startsWith('/')) {
+                        arr.push(`• <a href="https://azbyka.ru${href}">${name}</a>`);
+                    } else {
+                        arr.push(`• ${name}`);
+                    }
+                }
+            });
+            if (arr.length) saints = arr;
+        }
+    } catch (e) {
+        saints = [];
+    }
+    // Если API не вернул данные, используем локальный fallback
+    if (!saints.length) {
+        saints = getSaintsForDate(month, day).map(s => `• ${s}`);
+    }
+    // Старый стиль
+    const oldStyle = getOldStyleDate(now);
+    // Пост, седмица, период — локальные вычисления
+    const fasting = getFastingInfo(now, getOrthodoxPaschaDate(year));
+    // Формируем текст
+    let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
+    text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth()+1).padStart(2,'0')}, Новый стиль: ${day}.${String(month).padStart(2,'0')} (${weekday})</i>\n`;
+    text += `────────────────────\n\n`;
+    text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
+    text += `<b>Период:</b> ${fasting.period}\n`;
+    text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
+    // Святые дня
+    if (saints.length) {
+        text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
+    } else {
+        text += `<b>🕯 Святые дня:</b> информация отсутствует\n\n`;
+    }
+    text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
+    return { text, link: azLink };
 }
 
 async function createVerseCard(text, ref) {
@@ -293,8 +559,9 @@ bot.hears('Чтение писания', (ctx) => {
     ctx.replyWithHTML(`<b>📚 СВЯЩЕННОЕ ПИСАНИЕ</b>\n\nВыберите раздел:`, Markup.inlineKeyboard([[Markup.button.callback('📜 Ветхий Завет', 'test_old'), Markup.button.callback('📖 Новый Завет', 'test_new')]]));
 });
 
-bot.hears('Календарь', (ctx) => {
-    const cal = getDetailedCalendar();
+bot.hears('Календарь', async (ctx) => {
+    const cal = await getDetailedCalendar();
+
     ctx.replyWithHTML(cal.text, Markup.inlineKeyboard([
         [Markup.button.url('☦️ Открыть Азбуку Веры', cal.link)],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
