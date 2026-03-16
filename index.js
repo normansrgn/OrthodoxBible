@@ -903,7 +903,7 @@ async function sendTheophanMessage() {
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('49 18 * * *', sendTheophanMessage);
+schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
