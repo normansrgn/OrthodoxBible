@@ -19,6 +19,7 @@ if (fs.existsSync(fontPath)) {
 
 const token = process.env.BOT_TOKEN;
 
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 
 const bot = new Telegraf(token);
@@ -328,11 +329,40 @@ bot.hears('Молитвослов', (ctx) => {
 
 bot.hears('Случайный стих', (ctx) => {
     if (!bibleData.length) return;
-    const b = bibleData[Math.floor(Math.random() * bibleData.length)];
+
+    // 70% вероятность взять Новый Завет
+    const useNT = Math.random() < 0.7;
+    const filteredBooks = bibleData.filter(b => useNT ? b.BookId >= 40 : b.BookId <= 39);
+
+    const b = filteredBooks[Math.floor(Math.random() * filteredBooks.length)];
     const c = b.Chapters[Math.floor(Math.random() * b.Chapters.length)];
-    const v = c.Verses[Math.floor(Math.random() * c.Verses.length)];
-    const ref = `${getBookName(b.BookId)} ${c.ChapterId}:${v.VerseId}`;
-    ctx.replyWithHTML(`<b>ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${v.Text}</blockquote>\n\n📍 <b>${ref}</b>`, Markup.inlineKeyboard([[Markup.button.callback('🖼 Создать открытку', `pic_${b.BookId}_${c.ChapterId}_${v.VerseId}`)], [Markup.button.callback('📖 К главе', `read_new_${b.BookId}_${c.ChapterId}`)]]));
+    const startIndex = Math.floor(Math.random() * c.Verses.length);
+
+    // Собираем 1–3 стиха, чтобы получилось цельное высказывание
+    let verses = [];
+    for (let i = startIndex; i < c.Verses.length && verses.length < 3; i++) {
+        verses.push(c.Verses[i]);
+
+        const txt = c.Verses[i].Text.trim();
+        if (txt.endsWith('.') || txt.endsWith('!') || txt.endsWith('?')) break;
+    }
+
+    const text = verses.map(v => v.Text).join(' ');
+
+    const firstVerse = verses[0].VerseId;
+    const lastVerse = verses[verses.length - 1].VerseId;
+
+    const ref = firstVerse === lastVerse
+        ? `${getBookName(b.BookId)} ${c.ChapterId}:${firstVerse}`
+        : `${getBookName(b.BookId)} ${c.ChapterId}:${firstVerse}-${lastVerse}`;
+
+    ctx.replyWithHTML(
+        `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ </b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('🖼 Создать открытку', `pic_${b.BookId}_${c.ChapterId}_${firstVerse}`)],
+            [Markup.button.callback('📖 Открыть главу', `read_${b.BookId}_${c.ChapterId}`)]
+        ])
+    );
 });
 
 bot.hears('Псалтирь', (ctx) => {
