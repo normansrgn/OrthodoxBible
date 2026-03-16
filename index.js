@@ -597,42 +597,83 @@ bot.hears('Молитвослов', (ctx) => {
     });
 });
 
-bot.hears('Случайный стих', (ctx) => {
+bot.hears('Случайный стих', async (ctx) => {
+
     if (!bibleData.length) return;
 
-    // 70% вероятность взять Новый Завет
-    const useNT = Math.random() < 0.7;
-    const filteredBooks = bibleData.filter(b => useNT ? b.BookId >= 40 : b.BookId <= 39);
+    // --- ПРИОРИТЕТ КАК В YOUVERSION ---
+    const gospels = bibleData.filter(b => b.BookId >= 40 && b.BookId <= 43);
+    const psalms = bibleData.filter(b => b.BookId === 19);
+    const proverbs = bibleData.filter(b => b.BookId === 20);
+    const epistles = bibleData.filter(b => b.BookId >= 44 && b.BookId <= 65);
+    const oldTestament = bibleData.filter(b => b.BookId <= 39 && b.BookId !== 19 && b.BookId !== 20);
 
-    const b = filteredBooks[Math.floor(Math.random() * filteredBooks.length)];
-    const c = b.Chapters[Math.floor(Math.random() * b.Chapters.length)];
-    const startIndex = Math.floor(Math.random() * c.Verses.length);
+    let book;
+    const r = Math.random();
 
-    // Собираем 1–3 стиха, чтобы получилось цельное высказывание
-    let verses = [];
-    for (let i = startIndex; i < c.Verses.length && verses.length < 3; i++) {
-        verses.push(c.Verses[i]);
+    if (r < 0.45) {
+        book = gospels[Math.floor(Math.random() * gospels.length)];
+    }
+    else if (r < 0.65) {
+        book = psalms[0];
+    }
+    else if (r < 0.80) {
+        book = proverbs[0];
+    }
+    else if (r < 0.92) {
+        book = epistles[Math.floor(Math.random() * epistles.length)];
+    }
+    else {
+        book = oldTestament[Math.floor(Math.random() * oldTestament.length)];
+    }
 
-        const txt = c.Verses[i].Text.trim();
-        if (txt.endsWith('.') || txt.endsWith('!') || txt.endsWith('?')) break;
+    const chapter = book.Chapters[Math.floor(Math.random() * book.Chapters.length)];
+
+    let startIndex = Math.floor(Math.random() * chapter.Verses.length);
+
+    // защита от обрыва мысли
+    if (startIndex > 0) {
+        const prev = chapter.Verses[startIndex].Text.trim()[0];
+        if (prev === prev.toLowerCase()) startIndex--;
+    }
+
+    const verses = [];
+
+    for (let i = startIndex; i < chapter.Verses.length; i++) {
+
+        const v = chapter.Verses[i];
+        verses.push(v);
+
+        const text = v.Text.trim();
+
+        if (
+            verses.length >= 3 &&
+            (text.endsWith('.') || text.endsWith('!') || text.endsWith('?'))
+        ) {
+            break;
+        }
+
+        if (verses.length >= 6) break;
     }
 
     const text = verses.map(v => v.Text).join(' ');
 
-    const firstVerse = verses[0].VerseId;
-    const lastVerse = verses[verses.length - 1].VerseId;
+    const first = verses[0].VerseId;
+    const last = verses[verses.length - 1].VerseId;
 
-    const ref = firstVerse === lastVerse
-        ? `${getBookName(b.BookId)} ${c.ChapterId}:${firstVerse}`
-        : `${getBookName(b.BookId)} ${c.ChapterId}:${firstVerse}-${lastVerse}`;
+    const ref =
+        first === last
+            ? `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}`
+            : `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}-${last}`;
 
-    ctx.replyWithHTML(
-        `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ </b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
+    await ctx.replyWithHTML(
+        `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('🖼 Создать открытку', `pic_${b.BookId}_${c.ChapterId}_${firstVerse}`)],
-            [Markup.button.callback('📖 Открыть главу', `read_${b.BookId}_${c.ChapterId}`)]
+            [Markup.button.callback('🖼 Создать открытку', `pic_${book.BookId}_${chapter.ChapterId}_${first}`)],
+            [Markup.button.callback('📖 Открыть главу', `read_${book.BookId}_${chapter.ChapterId}`)]
         ])
     );
+
 });
 
 bot.hears('Псалтирь', (ctx) => {
