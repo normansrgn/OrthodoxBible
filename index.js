@@ -1,10 +1,10 @@
 const schedule = require('node-schedule');
 const { Telegraf, Markup } = require('telegraf');
+const { session } = require('telegraf');
 const fs = require('fs');
+const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
-const { createCanvas, registerFont } = require('canvas');
-const cheerio = require('cheerio'); // объединяем импорт
 
 // --- НАСТРОЙКА ШРИФТА ---
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
@@ -22,31 +22,27 @@ if (fs.existsSync(fontPath)) {
 
 
 
-const token = process.env.BOT_TOKEN;
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
-
-// --- ADMIN MODULE ---
-const bot = new Telegraf(token);
-const adminModule = require('./admin.js');
-const { sendAdminMenu } = adminModule(bot);
+// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
     process.exit(1);
 }
+
+const bot = new Telegraf(token);
+bot.use(session());
 const DATA_FILE = './users_data.json';
 
 // --- БАЗА ДАННЫХ ---
 let db = {};
-// Объект для хранения состояния поиска по пользователям
-const searchMode = {};
 const loadDB = () => {
     if (fs.existsSync(DATA_FILE)) {
         try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
     }
 };
 const saveDB = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-const initUser = (id) => { if (!db[id]) db[id] = { bookmark: null }; };
+const initUser = (id) => { if (!db[id]) db[id] = { bookmark: null, isSearching: false }; };
 loadDB();
 
 // --- ДАННЫЕ БИБЛИИ ---
@@ -352,7 +348,85 @@ function getSaintsForDate(month, day) {
     return found ? found.saints : [];
 }
 
-// Функция getDetailedCalendar больше не используется напрямую (динамический календарь реализован ниже)
+// Главная функция календаря
+const cheerio = require('cheerio'); // не забудьте npm install cheerio
+
+// Исправленная функция для получения календаря с корректным парсом "Святые дня"
+async function getDetailedCalendar() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const weekday = WEEKDAYS[now.getDay()];
+    const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+    let saints = [];
+    try {
+        const data = await new Promise((resolve, reject) => {
+            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+                let raw = '';
+                res.on('data', chunk => raw += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(raw));
+                    } catch (e) { resolve(null); }
+                });
+            }).on('error', () => resolve(null));
+        });
+        if (data && data.presentations) {
+            // Парсим только список святых, удаляя запрещённые теги Telegram
+            // Оставляем только <a>, <b>, <i>, <u>, <s>, <code>, <pre>, <span>
+            // (но используем только <a> для святых)
+            const $ = cheerio.load(data.presentations, { decodeEntities: false });
+            const arr = [];
+            // Удаляем фото, таблицы, картинки и запрещённые теги
+            $('img, table, tbody, tr, td, th, style, script, iframe, object, embed, form, input, button, video, audio, figure, figcaption').remove();
+            // Собираем только <a> с именами святых
+            $('a').each((i, el) => {
+                // Проверяем, что ссылка не пуста и текст не пустой
+                const name = $(el).text().trim();
+                const href = $(el).attr('href');
+                if (name) {
+                    // Только ссылки на жития (azbyka.ru) или просто имя
+                    if (href && /^https?:\/\/azbyka\.ru/.test(href)) {
+                        arr.push(`• <a href="${href}">${name}</a>`);
+                    } else if (href && href.startsWith('/')) {
+                        arr.push(`• <a href="https://azbyka.ru${href}">${name}</a>`);
+                    } else {
+                        arr.push(`• ${name}`);
+                    }
+                }
+            });
+            if (arr.length) saints = arr;
+        }
+    } catch (e) {
+        saints = [];
+    }
+    // Если API не вернул данные, используем локальный fallback
+    if (!saints.length) {
+        saints = getSaintsForDate(month, day).map(s => `• ${s}`);
+    }
+    // Старый стиль
+    const oldStyle = getOldStyleDate(now);
+    // Пост, седмица, период — локальные вычисления
+    const fasting = getFastingInfo(now, getOrthodoxPaschaDate(year));
+    // Формируем текст
+    let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
+    text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${String(month).padStart(2, '0')} (${weekday})</i>\n`;
+    text += `────────────────────\n\n`;
+    text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
+    text += `<b>Период:</b> ${fasting.period}\n`;
+    text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
+    // Святые дня
+    if (saints.length) {
+        text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
+    } else {
+        text += `<b>🕯 Святые дня:</b> информация отсутствует\n\n`;
+    }
+    text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
+    return { text, link: azLink };
+}
 
 async function createVerseCard(text, ref) {
     const canvas = createCanvas(1080, 1080);
@@ -494,7 +568,6 @@ bot.hears('Чтение писания', (ctx) => {
 });
 
 // --- Динамический календарь с кнопками Вчера/Завтра ---
-// Оставляем только один обработчик "Календарь" (убираем дубли)
 bot.hears('Календарь', async (ctx) => {
     const now = new Date();
     await sendDynamicCalendar(ctx, now);
@@ -598,7 +671,7 @@ bot.hears('Случайный стих', async (ctx) => {
     await ctx.replyWithHTML(
         `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
         Markup.inlineKeyboard([
-            // [Markup.button.callback('🖼 Создать открытку', `pic_${book.BookId}_${chapter.ChapterId}_${first}`)],
+            [Markup.button.callback('🖼 Создать открытку', `pic_${book.BookId}_${chapter.ChapterId}_${first}`)],
             [Markup.button.callback('📖 Открыть главу', `read_${book.BookId}_${chapter.ChapterId}`)]
         ])
     );
@@ -617,25 +690,56 @@ bot.hears('Закладка', (ctx) => {
 });
 
 bot.hears('Поиск', (ctx) => {
-    searchMode[ctx.chat.id] = true; // включаем режим поиска для этого пользователя
+    initUser(ctx.from.id);
+    db[ctx.from.id].isSearching = true;
+    saveDB();
     const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
         `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
         `────────────────────\n\n` +
         `Введите ключевое слово или фразу, которую вы хотите найти в Библии.\n\n` +
         `<b>Например:</b> <i>любовь, вера, заповедь</i>\n\n` +
-        `🕊 <b>Просто отправьте слово в ответ на это сообщение:</b>`;
+        `🕊 <b>Введите слово и нажмите кнопку «Поиск» ниже:</b>`;
 
     ctx.replyWithHTML(searchText, Markup.inlineKeyboard([
+        [Markup.button.callback('🔎 Поиск', 'do_bible_search')],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
     ]));
 });
 
+// --- ОБРАБОТКА ТЕКСТА ДЛЯ ПОИСКА ---
 bot.on('text', async (ctx) => {
-    // Если пользователь не в режиме поиска, выходим
-    if (!searchMode[ctx.chat.id]) return;
+    // Проверяем, что это не меню
+    const menuButtons = ['📖 Библия', '📜 Закон Божий', 'Молитвослов', 'Календарь', 'Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
+    if (menuButtons.includes(ctx.message.text)) return;
 
-    const q = ctx.message.text.toLowerCase();
-    if (q.length < 3) return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
+    initUser(ctx.from.id);
+    // Если пользователь НЕ в режиме поиска, не реагируем
+    if (!db[ctx.from.id].isSearching) return;
+
+    // Сохраняем введённый запрос для последующего поиска
+    db[ctx.from.id].lastSearchQuery = ctx.message.text;
+    saveDB();
+
+    // Просим пользователя нажать кнопку "Поиск"
+    await ctx.replyWithHTML("🔎 <b>Теперь нажмите кнопку «Поиск» ниже для выполнения поиска.</b>",
+        Markup.inlineKeyboard([
+            [Markup.button.callback('🔎 Поиск', 'do_bible_search')],
+            [Markup.button.callback('🏠 В главное меню', 'start_over')]
+        ])
+    );
+});
+
+// --- КНОПКА "ПОИСК" ДЛЯ ЗАПУСКА ПОИСКА В БИБЛИИ ---
+bot.action('do_bible_search', async (ctx) => {
+    const userId = ctx.from.id;
+    initUser(userId);
+    // Проверяем, был ли введён запрос
+    const q = db[userId].lastSearchQuery ? db[userId].lastSearchQuery.trim().toLowerCase() : '';
+    if (!q || q.length < 3) {
+        db[userId].isSearching = false;
+        saveDB();
+        return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
+    }
 
     let results = [];
     outer: for (const b of bibleData) {
@@ -655,11 +759,11 @@ bot.on('text', async (ctx) => {
         }
     }
 
-    if (!results.length) {
-        ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
-        searchMode[ctx.chat.id] = false; // отключаем режим поиска после ответа
-        return;
-    }
+    db[userId].isSearching = false;
+    db[userId].lastSearchQuery = '';
+    saveDB();
+
+    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
 
     let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
     responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
@@ -674,8 +778,6 @@ bot.on('text', async (ctx) => {
     });
 
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
-    
-    searchMode[ctx.chat.id] = false; // отключаем режим поиска после ответа
 });
 
 // --- CALLBACK ACTIONS ---
@@ -724,10 +826,6 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     const buf = await createVerseCard(v.Text, `${getBookName(bId)} ${cId}:${vId}`);
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
-
-
-
-
 
 bot.telegram.deleteWebhook().then(() => {
     bot.launch().then(async () => {
@@ -888,6 +986,12 @@ async function sendTheophanMessage() {
 schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
 
 
+// Динамический календарь с кнопками «Вчера»/«Завтра»
+bot.hears('Календарь', async (ctx) => {
+    const now = new Date();
+    await sendDynamicCalendar(ctx, now);
+});
+
 bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
     let dateStr = ctx.match[2];
     let date = new Date(dateStr);
@@ -948,7 +1052,6 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
     text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
 
-    // Кнопки должны вести к правильным датам!
     const prevDate = new Date(dateObj);
     prevDate.setDate(dateObj.getDate() - 1);
     const nextDate = new Date(dateObj);
@@ -959,8 +1062,8 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
 
     const kb = Markup.inlineKeyboard([
         [
-            Markup.button.callback('⬅️ Вчера', `calendar_prev_${prevStr}`),
-            Markup.button.callback('Завтра ➡️', `calendar_next_${nextStr}`)
+            Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
+            Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
         ],
         [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
@@ -970,4 +1073,15 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     else await ctx.replyWithHTML(text, kb);
 }
 
+
+
+// --- ПОДКЛЮЧЕНИЕ АДМИН-ПАНЕЛИ ---
+const adminPanel = require('./admin');
+adminPanel(bot);
+
+// Логирование для команды /admin (дублируется в admin.js, но оставим для явного контроля)
+bot.command('admin', (ctx, next) => {
+    console.log(`[ADMIN] /admin команда вызвана пользователем:`, ctx.from);
+    return next();
+});
 

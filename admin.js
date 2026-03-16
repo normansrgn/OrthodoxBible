@@ -1,187 +1,184 @@
-const fs = require('fs');
+/**
+ * Модуль админ-панели для OrthodoxBible.
+ * Экспортирует функцию adminPanel(bot), которая регистрирует команду /admin и обработчики callback для админки.
+ * Не создает новый экземпляр Telegraf, использует переданный bot.
+ */
+
 const { Markup } = require('telegraf');
 
-const ADMIN_ID = 481356531; 
-const DATA_FILE = './users_data.json';
+// Здесь можно указать id или username админов
+const ADMIN_IDS = [
+    481356531, // пример: замените на свой Telegram user id
+    // ...добавьте других админов
+];
 
-let db = {};
-const loadDB = () => {
-    if (fs.existsSync(DATA_FILE)) {
-        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
-    }
-};
-const saveDB = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-loadDB();
-
-function admin(bot) {
-    const getBar = (v, t) => {
-        const full = Math.round((v / t) * 10) || 0;
-        return '<code>' + '☩'.repeat(full) + '┈'.repeat(10 - full) + '</code>';
-    };
-
-    const generateMainDash = () => {
-        const ids = Object.keys(db).filter(k => !['actionsHistory', 'settings'].includes(k));
-        const total = ids.length;
-        const active = ids.filter(id => (db[id].messagesCount || 0) > 15).length;
-        const banned = ids.filter(id => db[id].isBlocked).length;
-
-        return `
-<b>☦️ ЦЕРКОВНОЕ УПРАВЛЕНИЕ ☦️</b>
-<i>«Где двое или трое собраны во имя Мое...»</i>
-────────────────────────
-🕒 <b>Время:</b> <code>${new Date().toLocaleTimeString('ru-RU')}</code>
-
-<b>📈 ДУХОВНЫЙ РОСТ (Активность):</b>
-<code>[ ▃▅▇█▇▆▅▃ ]</code> <i>Благолепно</i>
-
-<b>👥 ПАСТВА (Юзеры):</b>
-├ Всего душ:  <code>${total}</code>
-├ В запрете:  <code>${banned}</code>
-└ Ревностные: ${getBar(active, total)} <b>${Math.round((active/total)*100 || 0)}%</b>
-
-<b>📦 ХРАНИЛИЩЕ (БД):</b>
-└ Состояние:  🟢 <b>Упорядочено</b>
-────────────────────────
-<i>Выберите службу для исполнения:</i>
-        `.trim();
-    };
-
-    const mainKeyboard = () => Markup.inlineKeyboard([
-        [Markup.button.callback('📜 Список прихожан', 'list_0')],
-        [Markup.button.callback('🔍 Поиск чада', 'menu_search'), Markup.button.callback('📢 Глас (Рассылка)', 'menu_broadcast')],
-        [Markup.button.callback('📥 Свиток JSON', 'menu_backup'), Markup.button.callback('📊 Свиток CSV', 'menu_csv')],
-        [Markup.button.callback('🔄 Обновить', 'menu_dash'), Markup.button.callback('🚪 Выйти', 'start_over')]
-    ]);
-
-    async function sendAdminMenu(ctx) {
-        await ctx.replyWithHTML(generateMainDash(), mainKeyboard());
-    }
-
-    bot.on('callback_query', async (ctx) => {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Доступ закрыт!");
-        const data = ctx.callbackQuery.data;
-
-        try {
-            await ctx.answerCbQuery().catch(() => {});
-
-            if (data === 'menu_dash') {
-                return await ctx.editMessageText(generateMainDash(), { parse_mode: 'HTML', reply_markup: mainKeyboard().reply_markup });
-            }
-
-            // --- ИНТЕРАКТИВНЫЙ СПИСОК ПРИХОЖАН ---
-            if (data.startsWith('list_')) {
-                const page = parseInt(data.split('_')[1]);
-                const ids = Object.keys(db)
-                    .filter(k => !['actionsHistory', 'settings'].includes(k))
-                    .sort((a,b) => (db[b].messagesCount || 0) - (db[a].messagesCount || 0));
-                
-                const pageSize = 7;
-                const totalPages = Math.ceil(ids.length / pageSize);
-                const currentIds = ids.slice(page * pageSize, (page + 1) * pageSize);
-
-                const buttons = currentIds.map(id => [
-                    Markup.button.callback(`${db[id].isBlocked ? '❌' : '☦︎'} ${db[id].name || 'Аноним'} (${db[id].messagesCount || 0})`, `user_${id}`)
-                ]);
-
-                const nav = [];
-                if (page > 0) nav.push(Markup.button.callback('⇠ Назад', `list_${page - 1}`));
-                nav.push(Markup.button.callback(`${page + 1} из ${totalPages}`, 'ignore'));
-                if (page < totalPages - 1) nav.push(Markup.button.callback('Вперед ⇢', `list_${page + 1}`));
-                
-                buttons.push(nav);
-                buttons.push([Markup.button.callback('🔙 Вернуться в притвор', 'menu_dash')]);
-
-                return await ctx.editMessageText(`<b>📜 КНИГА ПРИХОЖАН</b>\n<i>Нажмите на имя для вразумления или управления:</i>`, {
-                    parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-                });
-            }
-
-            // --- КАРТОЧКА ЮЗЕРА ---
-            if (data.startsWith('user_')) {
-                const uid = data.split('_')[1];
-                const u = db[uid];
-                const info = `
-<b>☦︎ КАРТОЧКА ПРИХОЖАНИНА</b>
-──────────────────
-🆔 <b>ID:</b> <code>${uid}</code>
-👤 <b>Имя:</b> <code>${u.name || 'Скрыто'}</code>
-🌐 <b>Ник:</b> @${u.username || 'не указан'}
-💬 <b>Трудов (смс):</b> <code>${u.messagesCount || 0}</code>
-🔴 <b>Статус:</b> ${u.isBlocked ? 'В запрете (Бан)' : 'В добром здравии'}
-──────────────────`;
-                return await ctx.editMessageText(info, {
-                    parse_mode: 'HTML',
-                    reply_markup: Markup.inlineKeyboard([
-                        [Markup.button.callback('✉️ Личное поучение', `msg_${uid}`)],
-                        [Markup.button.callback(u.isBlocked ? '🔓 Снять запрет' : '🚫 Наложить запрет', `tgl_${uid}`)],
-                        [Markup.button.callback('⬅️ К списку', 'list_0')]
-                    ]).reply_markup
-                });
-            }
-
-            // --- ЛИЧНОЕ СООБЩЕНИЕ ---
-            if (data.startsWith('msg_')) {
-                const uid = data.split('_')[1];
-                await ctx.reply(`✍️ <b>Письмо для ${db[uid].name}:</b>\nВведите текст сообщения для отправки прихожанину в личку.`, { parse_mode: 'HTML' });
-                bot.once('message', async (mCtx) => {
-                    try {
-                        await bot.telegram.sendMessage(uid, `<b>✉️ Сообщение от администрации:</b>\n\n${mCtx.text}`, { parse_mode: 'HTML' });
-                        await mCtx.reply("✅ Послание доставлено!");
-                    } catch (e) { await mCtx.reply("❌ Не удалось доставить (возможно, бот заблокирован)."); }
-                });
-            }
-
-            if (data.startsWith('tgl_')) {
-                const uid = data.split('_')[1];
-                db[uid].isBlocked = !db[uid].isBlocked;
-                saveDB();
-                return await ctx.answerCbQuery("Статус изменен");
-            }
-
-            // Рассылка
-            if (data === 'menu_broadcast') {
-                await ctx.reply("📢 <b>ГЛАС АДМИНИСТРАЦИИ</b>\nПришлите весть для всей паствы:", { parse_mode: 'HTML' });
-                bot.once('message', async (mCtx) => {
-                    const ids = Object.keys(db).filter(id => !db[id].isBlocked && id.length > 5);
-                    let ok = 0;
-                    for(let id of ids) { try { await bot.telegram.copyMessage(id, mCtx.chat.id, mCtx.message.message_id); ok++; } catch(e){} }
-                    await mCtx.reply(`☦︎ Весть разнесена ${ok} прихожанам.`);
-                });
-            }
-
-            // CSV
-            if (data === 'menu_csv') {
-                let csv = "\ufeffID;Имя;Активность\n";
-                Object.keys(db).forEach(id => { if(db[id].name) csv += `${id};${db[id].name};${db[id].messagesCount}\n` });
-                fs.writeFileSync('./pastva.csv', csv);
-                await ctx.replyWithDocument({ source: './pastva.csv' });
-            }
-
-            // Backup
-            if (data === 'menu_backup') {
-                fs.writeFileSync('./backup.json', JSON.stringify(db, null, 2));
-                await ctx.replyWithDocument({ source: './backup.json' });
-            }
-
-        } catch (e) {
-            if (!e.description?.includes('message is not modified')) console.error(e);
-        }
-    });
-
-    bot.on('text', async (ctx, next) => {
-        const uid = ctx.from.id;
-        if (!db[uid]) {
-            db[uid] = { name: ctx.from.first_name, username: ctx.from.username, messagesCount: 0, isBlocked: false };
-            if (uid !== ADMIN_ID) bot.telegram.sendMessage(ADMIN_ID, `🔔 <b>Колокольный звон!</b>\nНовый прихожанин: <b>${ctx.from.first_name}</b>`, {parse_mode:'HTML'}).catch(()=>{});
-        }
-        if (db[uid].isBlocked && uid !== ADMIN_ID) return;
-        db[uid].messagesCount++;
-        saveDB();
-        if (ctx.message.text === '/admin' && uid === ADMIN_ID) return sendAdminMenu(ctx);
-        await next();
-    });
-
-    return { sendAdminMenu }; 
+/**
+ * Проверка, является ли пользователь админом
+ */
+function isAdmin(ctx) {
+    if (!ctx.from) return false;
+    // По id или username
+    return (
+        ADMIN_IDS.includes(ctx.from.id) ||
+        (ctx.from.username && ['your_admin_username'].includes(ctx.from.username))
+    );
 }
 
-module.exports = admin;
+/**
+ * Основная функция для подключения админ-панели к боту
+ * @param {Telegraf} bot
+ */
+function adminPanel(bot) {
+    // Команда /admin
+    bot.command('admin', async (ctx) => {
+        if (!isAdmin(ctx)) {
+            return ctx.reply('⛔️ Доступ запрещён. Только для администраторов.');
+        }
+        await ctx.replyWithHTML(
+            '<b>⚙️ Админ-панель</b>\n\nВыберите действие:',
+            Markup.inlineKeyboard([
+                [Markup.button.callback('📊 Статистика', 'admin_stats')],
+                [Markup.button.callback('📨 Рассылка', 'admin_broadcast')],
+                [Markup.button.callback('❌ Закрыть', 'admin_close')],
+            ])
+        );
+    });
+
+    // Callback: Статистика
+    bot.action('admin_stats', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        // Пример: статистика пользователей
+        let userCount = 0;
+        try {
+            // Попробуем загрузить users_data.json
+            const fs = require('fs');
+            const path = require('path');
+            const dbPath = path.resolve(__dirname, 'users_data.json');
+            if (fs.existsSync(dbPath)) {
+                const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+                userCount = Object.keys(db).length;
+            }
+        } catch (e) {
+            userCount = 0;
+        }
+        await ctx.editMessageText(
+            `<b>📊 Статистика</b>\n\nПользователей в базе: <b>${userCount}</b>`,
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('⬅️ Назад', 'admin_back')],
+                    [Markup.button.callback('❌ Закрыть', 'admin_close')],
+                ]),
+            }
+        );
+    });
+
+    // Callback: Рассылка - шаг 1 (ввод текста)
+    bot.action('admin_broadcast', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        await ctx.editMessageText(
+            '<b>📨 Рассылка</b>\n\nОтправьте текст сообщения для рассылки всем пользователям.\n\n<i>Можно использовать HTML-разметку.</i>',
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('⬅️ Назад', 'admin_back')],
+                    [Markup.button.callback('❌ Закрыть', 'admin_close')],
+                ]),
+            }
+        );
+        // Включаем режим ожидания текста рассылки
+        ctx.session = ctx.session || {};
+        ctx.session.admin_broadcast_mode = true;
+    });
+
+    // Callback: Закрыть админку
+    bot.action('admin_close', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        await ctx.editMessageText('Админ-панель закрыта.', { parse_mode: 'HTML' }).catch(() => {});
+    });
+
+    // Callback: Назад к главному меню админки
+    bot.action('admin_back', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        await ctx.editMessageText(
+            '<b>⚙️ Админ-панель</b>\n\nВыберите действие:',
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('📊 Статистика', 'admin_stats')],
+                    [Markup.button.callback('📨 Рассылка', 'admin_broadcast')],
+                    [Markup.button.callback('❌ Закрыть', 'admin_close')],
+                ]),
+            }
+        );
+    });
+
+    // Обработка текста рассылки (только для админов и если был выбран режим рассылки)
+    bot.on('text', async (ctx, next) => {
+        // Проверяем, что это не команда/кнопка, не из обычных пользователей, и что включён режим рассылки
+        if (!isAdmin(ctx) || !ctx.session || !ctx.session.admin_broadcast_mode) {
+            return next();
+        }
+        const text = ctx.message.text;
+        // Подтверждение рассылки
+        ctx.session.admin_broadcast_text = text;
+        ctx.session.admin_broadcast_mode = false;
+        await ctx.replyWithHTML(
+            `<b>Подтвердите рассылку:</b>\n\n${text}`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('✅ Подтвердить', 'admin_broadcast_send')],
+                [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')],
+            ])
+        );
+    });
+
+    // Callback: Отмена рассылки
+    bot.action('admin_broadcast_cancel', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        ctx.session = ctx.session || {};
+        ctx.session.admin_broadcast_text = null;
+        ctx.session.admin_broadcast_mode = false;
+        await ctx.editMessageText('Рассылка отменена.', { parse_mode: 'HTML' }).catch(() => {});
+    });
+
+    // Callback: Отправить рассылку
+    bot.action('admin_broadcast_send', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCbQuery('Нет доступа');
+        ctx.session = ctx.session || {};
+        const text = ctx.session.admin_broadcast_text;
+        if (!text) {
+            await ctx.editMessageText('Нет текста для рассылки.', { parse_mode: 'HTML' }).catch(() => {});
+            return;
+        }
+        // Загружаем список пользователей
+        let userIds = [];
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const dbPath = path.resolve(__dirname, 'users_data.json');
+            if (fs.existsSync(dbPath)) {
+                const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+                userIds = Object.keys(db);
+            }
+        } catch (e) {
+            userIds = [];
+        }
+        let sent = 0;
+        for (const id of userIds) {
+            try {
+                await bot.telegram.sendMessage(id, text, { parse_mode: 'HTML', disable_web_page_preview: true });
+                sent++;
+            } catch (e) {
+                // игнорируем ошибки отправки отдельным пользователям
+            }
+        }
+        await ctx.editMessageText(
+            `Рассылка завершена.\n\nСообщение отправлено <b>${sent}</b> пользователям.`,
+            { parse_mode: 'HTML' }
+        );
+        ctx.session.admin_broadcast_text = null;
+        ctx.session.admin_broadcast_mode = false;
+    });
+}
+
+module.exports = adminPanel;
