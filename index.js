@@ -22,8 +22,8 @@ if (fs.existsSync(fontPath)) {
 
 
 
-const token = process.env.BOT_TOKEN;
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -353,7 +353,8 @@ const cheerio = require('cheerio'); // не забудьте npm install cheerio
 
 // Исправленная функция для получения календаря с корректным парсом "Святые дня"
 async function getDetailedCalendar() {
-    const now = new Date();
+    // Используем московское время (UTC+3)
+    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
     const day = now.getDate();
@@ -569,7 +570,8 @@ bot.hears('Чтение писания', (ctx) => {
 
 // --- Динамический календарь с кнопками Вчера/Завтра ---
 bot.hears('Календарь', async (ctx) => {
-    const now = new Date();
+    // Используем московское время (UTC+3)
+    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     await sendDynamicCalendar(ctx, now);
 });
 
@@ -987,27 +989,37 @@ schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
+// Новый обработчик календаря: показывает только один день, безопасная обработка ошибок, кнопки для навигации
 bot.hears('Календарь', async (ctx) => {
-    const now = new Date();
+    // Московское время (UTC+3)
+    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     await sendDynamicCalendar(ctx, now);
 });
 
 bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
-    let dateStr = ctx.match[2];
-    let date = new Date(dateStr);
-    if (ctx.match[1] === 'prev') date.setDate(date.getDate() - 1);
-    else date.setDate(date.getDate() + 1);
-    await sendDynamicCalendar(ctx, date, true);
+    try {
+        let dateStr = ctx.match[2];
+        let date = new Date(dateStr);
+        if (ctx.match[1] === 'prev') date.setDate(date.getDate() - 1);
+        else date.setDate(date.getDate() + 1);
+        await sendDynamicCalendar(ctx, date, true);
+    } catch (e) {
+        try { await ctx.reply('Произошла ошибка при загрузке календаря. Попробуйте позже.'); } catch {}
+    }
 });
 
 async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
+    // Используем московское время по умолчанию
+    if (!dateObj) {
+        dateObj = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    }
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
     const weekday = WEEKDAYS[dateObj.getDay()];
     const azLink = `https://azbyka.ru/days/${year}-${month}-${day}`;
 
-    // Получаем святых дня через API
+    // Получаем святых дня через API (безопасно)
     let saints = [];
     try {
         const data = await new Promise((resolve) => {
@@ -1020,7 +1032,6 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
                 });
             }).on('error', () => resolve(null));
         });
-
         if (data && data.presentations) {
             const $ = cheerio.load(data.presentations, { decodeEntities: false });
             const arr = [];
@@ -1049,17 +1060,20 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
     text += `<b>Период:</b> ${fasting.period}\n`;
     text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
-    text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
+    if (saints.length) {
+        text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
+    } else {
+        text += `<b>🕯 Святые дня:</b> информация отсутствует\n\n`;
+    }
     text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
 
+    // Кнопки "Вчера"/"Завтра" — только один день за раз
     const prevDate = new Date(dateObj);
     prevDate.setDate(dateObj.getDate() - 1);
     const nextDate = new Date(dateObj);
     nextDate.setDate(dateObj.getDate() + 1);
-
     const prevStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
     const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
-
     const kb = Markup.inlineKeyboard([
         [
             Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
@@ -1069,8 +1083,27 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
     ]);
 
-    if (isEdit && ctx.editMessageText) await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
-    else await ctx.replyWithHTML(text, kb);
+    try {
+        if (isEdit && ctx.editMessageText) {
+            await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+        } else {
+            await ctx.replyWithHTML(text, kb);
+        }
+    } catch (e) {
+        try { await ctx.reply('Произошла ошибка при отправке календаря.'); } catch {}
+    }
+}
+
+// Универсальная безопасная функция массовой рассылки с паузой между отправками (200 мс)
+async function safeMassSend(bot, ids, sendFunc, pauseMs = 200) {
+    for (const id of ids) {
+        try {
+            await sendFunc(id);
+        } catch (e) {
+            // Можно логировать ошибку отправки пользователю
+        }
+        await new Promise(r => setTimeout(r, pauseMs));
+    }
 }
 
 
