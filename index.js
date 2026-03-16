@@ -669,7 +669,7 @@ bot.hears('Случайный стих', async (ctx) => {
     await ctx.replyWithHTML(
         `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('🖼 Создать открытку', `pic_${book.BookId}_${chapter.ChapterId}_${first}`)],
+            // [Markup.button.callback('🖼 Создать открытку', `pic_${book.BookId}_${chapter.ChapterId}_${first}`)],
             [Markup.button.callback('📖 Открыть главу', `read_${book.BookId}_${chapter.ChapterId}`)]
         ])
     );
