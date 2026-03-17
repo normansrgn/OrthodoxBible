@@ -11,32 +11,30 @@ const https = require('https');
 let octokit;
 
 async function checkOctokitAndGist({ exitOnError = false } = {}) {
-    const token = process.env.GITHUB_TOKEN;
+    const token = process.env.GITHUB_TOKEN; // Используем только process.env
     const gistId = process.env.GIST_ID;
+
     if (!token) {
         console.error('❌ Переменная окружения GITHUB_TOKEN не установлена. Укажите токен GitHub в GITHUB_TOKEN.');
         if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
         return false;
     }
+
     if (!gistId) {
         console.error('❌ Переменная окружения GIST_ID не установлена. Укажите ID Gist в GIST_ID.');
         if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
         return false;
     }
-    const { Octokit } = await import('@octokit/rest');
-    octokit = new Octokit({ auth: token });
-    // Проверим доступ к Gist
+
     try {
+        const { Octokit } = await import('@octokit/rest');
+        octokit = new Octokit({ auth: token });
         await octokit.gists.get({ gist_id: gistId });
         return true;
     } catch (e) {
-        if (e.status === 404) {
-            console.error('❌ Указанный GIST_ID не найден или недоступен для этого токена.');
-        } else if (e.status === 401 || e.status === 403) {
-            console.error('❌ Недостаточно прав для доступа к Gist. Проверьте GITHUB_TOKEN.');
-        } else {
-            console.error('❌ Ошибка при проверке Gist:', e.message);
-        }
+        if (e.status === 404) console.error('❌ Указанный GIST_ID не найден или недоступен для этого токена.');
+        else if (e.status === 401 || e.status === 403) console.error('❌ Недостаточно прав для доступа к Gist. Проверьте GITHUB_TOKEN.');
+        else console.error('❌ Ошибка при проверке Gist:', e.message);
         if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
         return false;
     }
