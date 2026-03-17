@@ -42,16 +42,16 @@ async function checkOctokitAndGist({ exitOnError = false } = {}) {
 
 // Startup logic: check env vars, octokit, and load DB
 (async () => {
-    // Проверяем только переменные окружения, без файлов
-    const ok = await checkOctokitAndGist({ exitOnError: false });
-    if (!ok) {
-        // Не вызываем exit на этапе сборки, только логируем
-        console.error('❌ Не удалось инициализировать Octokit или получить доступ к Gist. Бот не сможет сохранять данные без GITHUB_TOKEN и GIST_ID.');
-    } else {
+    // Проверяем только переменные окружения, без файлов, и не вызываем exit на этапе сборки
+    await checkOctokitAndGist({ exitOnError: false });
+    // Не вызываем exit на этапе сборки, только логируем
+    // Не загружаем db если нет токенов, но бот стартует в любом случае
+    if (octokit && process.env.GITHUB_TOKEN && process.env.GIST_ID) {
         await loadDBFromGist();
         console.log('✅ DB успешно загружена с Gist');
+    } else {
+        console.error('❌ Не удалось инициализировать Octokit или получить доступ к Gist. Бот не сможет сохранять данные без GITHUB_TOKEN и GIST_ID.');
     }
-    // Бот стартует в любом случае, exit только если реально нужен токен в рантайме
     bot.telegram.deleteWebhook().then(() => {
         bot.launch().then(async () => {
             console.log('☦️ Бот запущен');
@@ -78,7 +78,8 @@ if (fs.existsSync(fontPath)) {
 }
 
 
-const token = process.env.BOT_TOKEN;
+// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 
 if (!token) {
@@ -181,7 +182,7 @@ async function broadcastMessage(message) {
 }
 
 async function loadDBFromGist() {
-    // Только переменные окружения, никаких файлов
+    // Используем только process.env, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
         console.error('❌ Нет доступа к Gist или токену. DB не загружена. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
         db = {};
@@ -223,9 +224,17 @@ async function loadDBFromGist() {
 }
 
 async function saveDBToGist() {
-    // Только переменные окружения, никаких файлов
+    // Используем только process.env, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
-        console.error('❌ Нет доступа к Gist или токену. Сохранение DB не выполняется. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
+        // В runtime: exit если реально требуется сохранить данные
+        const errMsg = '❌ Нет доступа к Gist или токену. Сохранение DB не выполняется. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.';
+        console.error(errMsg);
+        // Только в runtime (например, при явном требовании сохранения), можно exit:
+        if (typeof process !== "undefined" && process.exit) {
+            // NB: exit только если функция вызвана в runtime и данные реально нужны
+            // (например, при initUser/saveDBToGist вызове, т.е. для работы бота)
+            // Здесь exit не вызываем, только логируем.
+        }
         return;
     }
     try {
