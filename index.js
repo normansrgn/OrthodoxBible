@@ -7,25 +7,22 @@ const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
 
-// --- Octokit initialization (Railway/Cloud-friendly, ENV-only) ---
+// --- Octokit initialization (ENV-only, no file IO) ---
 let octokit;
 
 async function checkOctokitAndGist({ exitOnError = false } = {}) {
-    const token = process.env.GITHUB_TOKEN; // Используем только process.env
+    const token = process.env.GITHUB_TOKEN;
     const gistId = process.env.GIST_ID;
-
+    let ok = true;
     if (!token) {
         console.error('❌ Переменная окружения GITHUB_TOKEN не установлена. Укажите токен GitHub в GITHUB_TOKEN.');
-        if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
-        return false;
+        ok = false;
     }
-
     if (!gistId) {
         console.error('❌ Переменная окружения GIST_ID не установлена. Укажите ID Gist в GIST_ID.');
-        if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
-        return false;
+        ok = false;
     }
-
+    if (!ok) return false;
     try {
         const { Octokit } = await import('@octokit/rest');
         octokit = new Octokit({ auth: token });
@@ -35,17 +32,13 @@ async function checkOctokitAndGist({ exitOnError = false } = {}) {
         if (e.status === 404) console.error('❌ Указанный GIST_ID не найден или недоступен для этого токена.');
         else if (e.status === 401 || e.status === 403) console.error('❌ Недостаточно прав для доступа к Gist. Проверьте GITHUB_TOKEN.');
         else console.error('❌ Ошибка при проверке Gist:', e.message);
-        if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
         return false;
     }
 }
 
-// Startup logic: check env vars, octokit, and load DB
+// Startup logic: check env vars, octokit, and load DB (ENV-only, no file IO)
 (async () => {
-    // Проверяем только переменные окружения, без файлов, и не вызываем exit на этапе сборки
     await checkOctokitAndGist({ exitOnError: false });
-    // Не вызываем exit на этапе сборки, только логируем
-    // Не загружаем db если нет токенов, но бот стартует в любом случае
     if (octokit && process.env.GITHUB_TOKEN && process.env.GIST_ID) {
         await loadDBFromGist();
         console.log('✅ DB успешно загружена с Gist');
@@ -78,8 +71,8 @@ if (fs.existsSync(fontPath)) {
 }
 
 
-// const token = process.env.BOT_TOKEN;
-const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+const token = process.env.BOT_TOKEN;
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 
 if (!token) {
@@ -155,12 +148,8 @@ bot.on('my_chat_member', async (ctx) => {
     }
 });
 
-const GIST_ID = process.env.GIST_ID;
 const GIST_FILE = 'users_data.json'; // Ensure this matches the filename in your Gist exactly!
-
 let db = {}; // локальная копия базы
-
-
 
 const initUser = async (id) => {
     if (!db[id]) {
@@ -181,8 +170,8 @@ async function broadcastMessage(message) {
     }
 }
 
+// --- Gist DB functions: ENV-only, no file IO ---
 async function loadDBFromGist() {
-    // Используем только process.env, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
         console.error('❌ Нет доступа к Gist или токену. DB не загружена. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
         db = {};
@@ -224,17 +213,9 @@ async function loadDBFromGist() {
 }
 
 async function saveDBToGist() {
-    // Используем только process.env, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
-        // В runtime: exit если реально требуется сохранить данные
         const errMsg = '❌ Нет доступа к Gist или токену. Сохранение DB не выполняется. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.';
         console.error(errMsg);
-        // Только в runtime (например, при явном требовании сохранения), можно exit:
-        if (typeof process !== "undefined" && process.exit) {
-            // NB: exit только если функция вызвана в runtime и данные реально нужны
-            // (например, при initUser/saveDBToGist вызове, т.е. для работы бота)
-            // Здесь exit не вызываем, только логируем.
-        }
         return;
     }
     try {
