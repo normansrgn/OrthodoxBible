@@ -1,11 +1,9 @@
-
-
 const { Markup } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
+const fetch = require('node-fetch');
 
 const ADMIN_IDS = [481356531]; 
-const DB_PATH = path.resolve(__dirname, 'users_data.json');
 
 const STYLE = {
     header: '<b>┌───────────────────┐</b>',
@@ -14,21 +12,82 @@ const STYLE = {
     bullet: '<b>📍</b>'
 };
 
-function isAdmin(ctx) {
-    return ctx.from && ADMIN_IDS.includes(ctx.from.id);
+const GIST_ID = 'YOUR_GIST_ID_HERE'; // <-- Replace with your actual Gist ID
+const GIST_FILENAME = 'users_data.json';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // Set your GitHub token in env variables
+
+let db = {};
+
+async function saveDBToGist() {
+    if (!GITHUB_TOKEN) throw new Error('GitHub token not set');
+    const url = `https://api.github.com/gists/${GIST_ID}`;
+    const body = {
+        files: {
+            [GIST_FILENAME]: {
+                content: JSON.stringify(db, null, 2)
+            }
+        }
+    };
+    const res = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+        throw new Error('Failed to save to Gist');
+    }
+    return true;
 }
 
-function getDb() {
+async function loadDBFromGist() {
+    const url = `https://api.github.com/gists/${GIST_ID}`;
+    const headers = {
+        'Accept': 'application/vnd.github.v3+json'
+    };
+    if (GITHUB_TOKEN) {
+        headers['Authorization'] = `token ${GITHUB_TOKEN}`;
+    }
     try {
-        return fs.existsSync(DB_PATH) ? JSON.parse(fs.readFileSync(DB_PATH, 'utf8')) : {};
-    } catch (e) { return {}; }
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error('Failed to fetch Gist');
+        const gist = await res.json();
+        const fileContent = gist.files[GIST_FILENAME]?.content;
+        if (!fileContent) {
+            db = {};
+        } else {
+            db = JSON.parse(fileContent);
+        }
+        // Check if there are any real users besides the test user
+        const testId = ADMIN_IDS[0];
+        const realUsersExist = Object.keys(db).some(id => id !== String(testId));
+        if (Object.keys(db).length === 0 || !realUsersExist) {
+            if (!db[testId]) {
+                db[testId] = {
+                    name: 'Тестовый пользователь',
+                    username: 'testuser'
+                };
+                await saveDBToGist();
+            }
+        }
+        return db;
+    } catch (e) {
+        return {};
+    }
+}
+
+function isAdmin(ctx) {
+    return ctx.from && ADMIN_IDS.includes(ctx.from.id);
 }
 
 function adminPanel(bot) {
     
 
     const sendMain = async (ctx, edit = false) => {
-        const db = getDb();
+        await loadDBFromGist();
         const count = Object.keys(db).length;
         const text = `${STYLE.header}\n` +
                      `<b>    ⛪️ ГЛАВНЫЙ СОБОР</b>\n` +
@@ -55,7 +114,7 @@ function adminPanel(bot) {
 
     bot.action('admin_users', async (ctx) => {
         if (!isAdmin(ctx)) return;
-        const db = getDb();
+        await loadDBFromGist();
         const entries = Object.entries(db).reverse();
         const total = entries.length;
         
@@ -94,10 +153,15 @@ function adminPanel(bot) {
         if (!isAdmin(ctx)) return;
         await ctx.answerCbQuery('Подготовка выписки...');
         try {
-            await ctx.replyWithDocument({ source: DB_PATH, filename: 'users_database.json' }, {
-                caption: `<b>📂 ПОЛНЫЙ СПИСОК ПАСТВЫ</b>\nВсего записей: <code>${Object.keys(getDb()).length}</code>`,
+            await loadDBFromGist();
+            // Create a temporary file with db content to send
+            const tmpPath = path.resolve(__dirname, 'tmp_users_data.json');
+            fs.writeFileSync(tmpPath, JSON.stringify(db, null, 2), 'utf8');
+            await ctx.replyWithDocument({ source: tmpPath, filename: 'users_database.json' }, {
+                caption: `<b>📂 ПОЛНЫЙ СПИСОК ПАСТВЫ</b>\nВсего записей: <code>${Object.keys(db).length}</code>`,
                 parse_mode: 'HTML'
             });
+            fs.unlinkSync(tmpPath);
         } catch (e) {
             await ctx.reply('❌ Ошибка при чтении файла БД.');
         }
@@ -106,13 +170,14 @@ function adminPanel(bot) {
 
     bot.action(['admin_stats', 'admin_refresh'], async (ctx) => {
         if (!isAdmin(ctx)) return;
-        const db = getDb();
-        const stats = fs.statSync(DB_PATH);
+        await loadDBFromGist();
+        // Approximate size of db content string in bytes
+        const size = Buffer.byteLength(JSON.stringify(db), 'utf8');
         const text = `${STYLE.header}\n` +
                      `<b>    📊 АНАЛИТИКА БАЗЫ</b>\n` +
                      `${STYLE.sep}\n` +
                      `${STYLE.bullet} Всего душ: <b>${Object.keys(db).length}</b>\n` +
-                     `${STYLE.bullet} Вес данных: <b>${(stats.size / 1024).toFixed(2)} KB</b>\n` +
+                     `${STYLE.bullet} Вес данных: <b>${(size / 1024).toFixed(2)} KB</b>\n` +
                      `${STYLE.bullet} Последний вход: <b>${new Date().toLocaleTimeString()}</b>\n` +
                      `${STYLE.sep}\n` +
                      `<i>Данные актуальны.</i>\n` +
@@ -154,8 +219,10 @@ function adminPanel(bot) {
     });
 
     bot.action('admin_send_confirm', async (ctx) => {
+        if (!isAdmin(ctx)) return;
         const text = ctx.session?.broadcast_payload;
-        const ids = Object.keys(getDb());
+        await loadDBFromGist();
+        const ids = Object.keys(db);
         await ctx.editMessageText('⌛ <b>Вещание начато...</b>', { parse_mode: 'HTML' });
         let count = 0;
         for (const id of ids) {

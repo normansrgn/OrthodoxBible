@@ -11,8 +11,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Игнорировать все в data кроме users_data.json
+# Игнорировать всё в data
 data/*
+# Но не игнорировать папку и users_data.json
 !data/
 !data/users_data.json
 

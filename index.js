@@ -1,3 +1,4 @@
+require('dotenv').config();
 const schedule = require('node-schedule');
 const { Telegraf, Markup } = require('telegraf');
 const { session } = require('telegraf');
@@ -5,6 +6,63 @@ const fs = require('fs');
 const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
+
+// --- Octokit initialization (moved to top) ---
+let octokit;
+let GITHUB_TOKEN_OK = false;
+let GIST_ID_OK = false;
+
+async function checkOctokitAndGist() {
+    const token = process.env.GITHUB_TOKEN;
+    const gistId = process.env.GIST_ID;
+    if (!token) {
+        console.error('❌ Переменная окружения GITHUB_TOKEN не установлена. Укажите токен GitHub в GITHUB_TOKEN.');
+        return false;
+    }
+    if (!gistId) {
+        console.error('❌ Переменная окружения GIST_ID не установлена. Укажите ID Gist в GIST_ID.');
+        return false;
+    }
+    const { Octokit } = await import('@octokit/rest');
+    octokit = new Octokit({ auth: token });
+    // Проверим доступ к Gist
+    try {
+        await octokit.gists.get({ gist_id: gistId });
+        GITHUB_TOKEN_OK = true;
+        GIST_ID_OK = true;
+        return true;
+    } catch (e) {
+        if (e.status === 404) {
+            console.error('❌ Указанный GIST_ID не найден или недоступен для этого токена.');
+        } else if (e.status === 401 || e.status === 403) {
+            console.error('❌ Недостаточно прав для доступа к Gist. Проверьте GITHUB_TOKEN.');
+        } else {
+            console.error('❌ Ошибка при проверке Gist:', e.message);
+        }
+        GITHUB_TOKEN_OK = false;
+        GIST_ID_OK = false;
+        return false;
+    }
+}
+
+(async () => {
+    const ok = await checkOctokitAndGist();
+    if (!ok) {
+        console.error('❌ Бот не может работать без доступа к Gist. Проверьте настройки и перезапустите.');
+        process.exit(1);
+    }
+    await loadDBFromGist();
+    // The rest of your startup code (moved from previous IIFE)...
+    bot.telegram.deleteWebhook().then(() => {
+        bot.launch().then(async () => {
+            console.log('☦️ Бот запущен');
+            await runScheduledTasksNow();
+        });
+    });
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+})();
+
 
 
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
@@ -22,6 +80,7 @@ if (fs.existsSync(fontPath)) {
 
 
 const token = process.env.BOT_TOKEN;
+
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -87,68 +146,129 @@ bot.use(async (ctx, next) => {
 });
 
 // 📌 Сохраняем все чаты (личка + группы)
-bot.on('my_chat_member', (ctx) => {
+bot.on('my_chat_member', async (ctx) => {
     const chatId = String(ctx.chat.id);
-
     if (!db[chatId]) {
-        db[chatId] = {
-            bookmark: null,
-            isSearching: false,
-            isGroup: ctx.chat.type !== 'private'
-        };
-        saveDB();
+        db[chatId] = { bookmark: null, isSearching: false, isGroup: ctx.chat.type !== 'private' };
+        await saveDBToGist();
         console.log('✅ Чат добавлен:', chatId, ctx.chat.type);
     }
 });
 
-const DATA_FILE = './data/users_data.json';
+const GIST_ID = process.env.GIST_ID;
+const GIST_FILE = 'users_data.json'; // Ensure this matches the filename in your Gist exactly!
 
-let db = {};
-const ensureDataDir = () => {
-    const dir = path.dirname(DATA_FILE);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-};
+let db = {}; // локальная копия базы
 
-const loadDB = () => {
-    ensureDataDir();
-    if (fs.existsSync(DATA_FILE)) {
-        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
-        catch (e) { console.error('Ошибка чтения БД, создаём новую:', e.message); db = {}; }
-    } else {
-        // Создаем новую базу с тестовым админом
-        db = {
-            "123456789": {
-                bookmark: null,
-                isSearching: false,
-                isAdmin: true,
-                name: "Test Admin"
-            }
-        };
-        saveDB();
-    }
-};
 
-const saveDB = () => {
-    ensureDataDir();
-    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-};
 
-const initUser = (id) => {
+const initUser = async (id) => {
     if (!db[id]) {
         db[id] = { bookmark: null, isSearching: false };
-        saveDB();
+        await saveDBToGist();
     }
 };
 
-// Массовая рассылка сообщения всем пользователям, которые нажали /start
+// Массовая рассылка сообщения всем пользователям и группам из db
 async function broadcastMessage(message) {
+    await loadDBFromGist();
+    await ensureAllChatsInDB();
     const ids = Object.keys(db);
     for (const id of ids) {
         try {
             await bot.telegram.sendMessage(id, message, { parse_mode: 'HTML', disable_web_page_preview: true });
         } catch (e) { console.error('Ошибка рассылки для', id, e.message); }
+    }
+}
+
+async function loadDBFromGist() {
+    // Проверяем валидность токена и Gist перед загрузкой
+    if (!octokit || !GITHUB_TOKEN_OK || !GIST_ID_OK) {
+        console.error('❌ Нет доступа к Gist или токену. DB не загружена.');
+        db = {};
+        return;
+    }
+    try {
+        const res = await octokit.gists.get({ gist_id: GIST_ID });
+        let fileContent = '{}';
+        // Check if file exists in gist
+        if (res.data.files && res.data.files[GIST_FILE]) {
+            fileContent = res.data.files[GIST_FILE].content;
+        } else {
+            // File does not exist in Gist, create it with empty object
+            await octokit.gists.update({
+                gist_id: GIST_ID,
+                files: { [GIST_FILE]: { content: '{}' } }
+            });
+            fileContent = '{}';
+            console.log(`✅ Файл ${GIST_FILE} создан в Gist`);
+        }
+        db = JSON.parse(fileContent);
+        console.log('✅ DB загружена с Gist');
+    } catch (e) {
+        // If gist not found or file not found, try to create file
+        if (e.status === 404) {
+            try {
+                await octokit.gists.update({
+                    gist_id: GIST_ID,
+                    files: { [GIST_FILE]: { content: '{}' } }
+                });
+                db = {};
+                console.log(`✅ Файл ${GIST_FILE} автоматически создан в Gist`);
+            } catch (err) {
+                console.error('❌ Ошибка создания файла в Gist:', err.message);
+                db = {};
+            }
+        } else {
+            console.error('❌ Ошибка загрузки DB с Gist:', e.message);
+            db = {};
+        }
+    }
+}
+
+async function saveDBToGist() {
+    // Проверяем валидность токена и Gist перед сохранением
+    if (!octokit || !GITHUB_TOKEN_OK || !GIST_ID_OK) {
+        console.error('❌ Нет доступа к Gist или токену. Сохранение DB не выполняется.');
+        return;
+    }
+    try {
+        const content = JSON.stringify(db, null, 2);
+        // First, get the gist and check if file exists
+        let gist;
+        try {
+            gist = await octokit.gists.get({ gist_id: GIST_ID });
+        } catch (e) {
+            gist = null;
+        }
+        let files = {};
+        if (gist && gist.data.files && gist.data.files[GIST_FILE]) {
+            // File exists, update as usual
+            files[GIST_FILE] = { content };
+        } else {
+            // File does not exist, create it with {} if db is empty, else with current db
+            files[GIST_FILE] = { content: content || '{}' };
+        }
+        await octokit.gists.update({
+            gist_id: GIST_ID,
+            files
+        });
+        console.log('✅ DB сохранена на Gist');
+    } catch (e) {
+        // If file not found, attempt to create it
+        if (e.status === 404) {
+            try {
+                await octokit.gists.update({
+                    gist_id: GIST_ID,
+                    files: { [GIST_FILE]: { content: '{}' } }
+                });
+                console.log(`✅ Файл ${GIST_FILE} автоматически создан в Gist`);
+            } catch (err) {
+                console.error('❌ Ошибка создания файла в Gist:', err.message);
+            }
+        } else {
+            console.error('❌ Ошибка сохранения DB на Gist:', e.message);
+        }
     }
 }
 
@@ -168,13 +288,15 @@ async function ensureAllChatsInDB() {
                 }
             }
         });
-        saveDB();
+        await saveDBToGist();
     } catch (e) {
         console.error('Ошибка ensureAllChatsInDB:', e);
     }
 }
 
-loadDB();
+
+
+// -- END of moved IIFE, rest of the code continues as before --
 
 
 let bibleData = [];
@@ -609,9 +731,9 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     if (!chapter) return;
     // Используем initUser для chat.id (в группах) или from.id (в личке)
     const uid = String(ctx.from?.id ?? ctx.chat?.id);
-    initUser(uid);
+    await initUser(uid);
     db[uid].bookmark = { bId, cId };
-    saveDB();
+    await saveDBToGist();
     const text = `<b>☦️ ${getBookName(bId)}, Гл. ${cId}</b>\n━━━━━━━━━━━━━━━━\n\n` +
         chapter.Verses.map(v => `<b>${v.VerseId}</b> ${v.Text}`).join('\n\n');
     const nav = [];
@@ -832,23 +954,23 @@ bot.hears('Псалтирь', (ctx) => {
     ctx.replyWithHTML(`<b>Псалтирь на всякую потребу</b>`, Markup.inlineKeyboard(buttons));
 });
 
-bot.hears('Закладка', (ctx) => {
+bot.hears('Закладка', async (ctx) => {
     if (!isPrivate(ctx)) {
         return ctx.reply('🔖 Закладок пока нет.', { remove_keyboard: true });
     }
-    initUser(ctx.chat.id);
+    await initUser(ctx.chat.id);
     const b = db[ctx.chat.id]?.bookmark;
     if (b) return sendChapter(ctx, b.bId, b.cId, false);
     ctx.replyWithHTML(`<b>🔖 Закладок пока нет.</b>`);
 });
 
-bot.hears('Поиск', (ctx) => {
+bot.hears('Поиск', async (ctx) => {
     if (!isPrivate(ctx)) {
         return ctx.reply('🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ', { remove_keyboard: true });
     }
-    initUser(ctx.from.id);
+    await initUser(ctx.from.id);
     db[ctx.from.id].isSearching = true;
-    saveDB();
+    await saveDBToGist();
     const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
         `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
         `────────────────────\n\n` +
@@ -872,10 +994,10 @@ bot.on('text', async (ctx, next) => {
 
     if (text.startsWith('/')) return next();
 
-    initUser(ctx.from.id);
+    await initUser(ctx.from.id);
     if (!db[ctx.from.id].isSearching) return next();
     db[ctx.from.id].lastSearchQuery = text;
-    saveDB();
+    await saveDBToGist();
 
     await ctx.replyWithHTML("🔎 <b>Теперь нажмите кнопку «Поиск» ниже для выполнения поиска.</b>",
         Markup.inlineKeyboard([
@@ -888,11 +1010,11 @@ bot.on('text', async (ctx, next) => {
 
 bot.action('do_bible_search', async (ctx) => {
     const userId = ctx.from.id;
-    initUser(userId);
+    await initUser(userId);
     const q = db[userId].lastSearchQuery ? db[userId].lastSearchQuery.trim().toLowerCase() : '';
     if (!q || q.length < 3) {
         db[userId].isSearching = false;
-        saveDB();
+        await saveDBToGist();
         if (!isPrivate(ctx)) {
             return ctx.reply("🕊 Введите минимум 3 символа для поиска.", { remove_keyboard: true });
         }
@@ -917,7 +1039,7 @@ bot.action('do_bible_search', async (ctx) => {
     }
     db[userId].isSearching = false;
     db[userId].lastSearchQuery = '';
-    saveDB();
+    await saveDBToGist();
     if (!results.length) {
         if (!isPrivate(ctx)) {
             return ctx.reply("🕊 Ничего не найдено. Попробуйте другое слово.", { remove_keyboard: true });
@@ -1004,20 +1126,7 @@ schedule.scheduleJob(
     sendDailyCalendarToGroups
 );
 
-
-
-bot.telegram.deleteWebhook().then(() => {
-    bot.launch().then(async () => {
-        console.log('☦️ Бот запущен');
-
-        await runScheduledTasksNow();
-    });
-});
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-
+// (The above launch code is now inside the IIFE at the top)
 
 async function runScheduledTasksNow() {
     console.log('▶️ Запуск всех отложенных задач сразу после старта бота для проверки…');
@@ -1048,6 +1157,7 @@ async function runScheduledTasksNow() {
 
 async function sendTheophanMessage() {
     // Ensure all chats from updates are present in db before sending
+    await loadDBFromGist(); // обновляем список всех чатов
     await ensureAllChatsInDB();
 
     const now = new Date();
@@ -1137,7 +1247,7 @@ async function sendTheophanMessage() {
 // Запуск "мысли дня" по московскому времени 12:34
 const { DateTime } = require('luxon');
 schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 20, minute: 10
+    { tz: 'Europe/Moscow', hour: 20, minute: 21
     , second: 0 },
     sendTheophanMessage
 );
@@ -1261,27 +1371,23 @@ async function safeMassSend(bot, ids, sendFunc, pauseMs = 200) {
 
 async function sendDailyCalendarToGroups() {
     console.log('📅 Началась рассылка календаря в группы...');
-
+    await loadDBFromGist(); // обновляем список всех чатов
+    await ensureAllChatsInDB();
     const ids = Object.keys(db);
-
     for (const id of ids) {
         try {
             // отправляем только в группы
             if (!db[id]?.isGroup) continue;
-
             const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
-
             // Отправляем календарь без кнопок (extra)
             await sendDynamicCalendar({
                 replyWithHTML: (text) => bot.telegram.sendMessage(id, text, {
                     parse_mode: 'HTML'
                 })
             }, date);
-
         } catch (e) {
             console.log('❌ Ошибка отправки в:', id, e);
         }
     }
-
     console.log('✅ Календарь отправлен всем группам');
 }
