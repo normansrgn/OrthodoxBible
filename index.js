@@ -97,7 +97,7 @@ bot.on('my_chat_member', (ctx) => {
             isGroup: ctx.chat.type !== 'private'
         };
         saveDB();
-        console.log('✅ Новый чат добавлен:', chatId);
+        console.log('✅ Чат добавлен:', chatId, ctx.chat.type);
     }
 });
 
@@ -1033,7 +1033,6 @@ async function sendTheophanMessage() {
     const dateStr = `${year}-${month}-${day}`;
     const url = `https://azbyka.ru/days/api/thoughts-st-theophan/${dateStr}.json`;
 
-
     let apiData = null;
     await new Promise((resolve) => {
         https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
@@ -1054,44 +1053,31 @@ async function sendTheophanMessage() {
         }).on('error', () => resolve());
     });
 
-
     if (!apiData || !apiData.text || typeof apiData.text !== 'string' || !apiData.text.trim()) {
         return;
     }
 
     const he = require('he');
     let htmlText = he.decode(apiData.text);
-
-    // const cheerio = require('cheerio'); // REMOVE duplicate require
     const allowedTags = ['a', 'b', 'i', 'u', 's', 'code', 'pre'];
 
     const $ = cheerio.load(`<div>${htmlText}</div>`, { decodeEntities: false });
 
-    /**
-     * 
-     * @param {CheerioElement} el
-     * @returns {string}
-     */
     function cleanNode(el) {
-
         if (el.type === 'text') {
             return el.data;
         }
-
         if (el.type === 'tag' && allowedTags.includes(el.name)) {
             let inner = '';
             if (el.children && el.children.length) {
                 inner = el.children.map(child => cleanNode(child)).join('');
             }
-
             if (el.name === 'a' && el.attribs && el.attribs.href) {
-
                 let href = el.attribs.href.replace(/"/g, '&quot;');
                 return `<a href="${href}">${inner}</a>`;
             }
             return `<${el.name}>${inner}</${el.name}>`;
         }
-
         if (el.children && el.children.length) {
             return el.children.map(child => cleanNode(child)).join('');
         }
@@ -1099,24 +1085,21 @@ async function sendTheophanMessage() {
     }
 
     let blockContent = '';
-
     const block = $('blockquote').first();
     if (block.length) {
         blockContent = block.contents().map((_, el) => cleanNode(el)).get().join('');
     } else {
-
         blockContent = $('div').contents().map((_, el) => cleanNode(el)).get().join('');
     }
-
     blockContent = blockContent.replace(/\n{3,}/g, '\n\n').trim();
 
-    const message =
+    const text =
         `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
         `<blockquote>${blockContent}</blockquote>`;
 
     for (const id of Object.keys(db)) {
         try {
-            await bot.telegram.sendMessage(id, message, {
+            await bot.telegram.sendMessage(id, text, {
                 parse_mode: 'HTML',
                 disable_web_page_preview: true
             });
@@ -1129,7 +1112,8 @@ async function sendTheophanMessage() {
 // Запуск "мысли дня" по московскому времени 12:34
 const { DateTime } = require('luxon');
 schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 19, minute: 55, second: 0 },
+    { tz: 'Europe/Moscow', hour: 20, minute: 2
+    , second: 0 },
     sendTheophanMessage
 );
 
