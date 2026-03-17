@@ -11,9 +11,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# База данных (локальный файл, чтобы не затирать его при деплое)
-users_data.json
-users.json
+# Игнорировать все в data кроме users_data.json
+data/*
+!data/users_data.json
 
 # Логи и кэш
 logs

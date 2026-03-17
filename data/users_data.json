@@ -1,0 +1,16 @@
+{
+  "123456789": {
+    "bookmark": null,
+    "isSearching": false,
+    "isAdmin": true,
+    "name": "Test Admin"
+  },
+  "481356531": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "8524625728": {
+    "bookmark": null,
+    "isSearching": false
+  }
+}

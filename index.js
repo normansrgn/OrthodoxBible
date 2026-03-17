@@ -30,18 +30,56 @@ if (!token) {
 
 const bot = new Telegraf(token);
 bot.use(session());
-const DATA_FILE = './users_data.json';
-
+const DATA_FILE = './data/users_data.json';
 
 let db = {};
-const loadDB = () => {
-    if (fs.existsSync(DATA_FILE)) {
-        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
+const ensureDataDir = () => {
+    const dir = path.dirname(DATA_FILE);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
     }
 };
 
-const saveDB = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-const initUser = (id) => { if (!db[id]) db[id] = { bookmark: null, isSearching: false }; };
+const loadDB = () => {
+    ensureDataDir();
+    if (fs.existsSync(DATA_FILE)) {
+        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
+    } else {
+        // Создаем новую базу с тестовым админом
+        db = {
+            "123456789": {
+                bookmark: null,
+                isSearching: false,
+                isAdmin: true,
+                name: "Test Admin"
+            }
+        };
+        saveDB();
+    }
+};
+
+const saveDB = () => {
+    ensureDataDir();
+    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
+};
+
+const initUser = (id) => {
+    if (!db[id]) {
+        db[id] = { bookmark: null, isSearching: false };
+        saveDB();
+    }
+};
+
+// Массовая рассылка сообщения всем пользователям, которые нажали /start
+async function broadcastMessage(message) {
+    const ids = Object.keys(db);
+    for (const id of ids) {
+        try {
+            await bot.telegram.sendMessage(id, message, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (e) {}
+    }
+}
+
 loadDB();
 
 
@@ -475,8 +513,11 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     const book = bibleData.find(x => x.BookId === bId);
     const chapter = book?.Chapters.find(x => x.ChapterId === cId);
     if (!chapter) return;
-    initUser(ctx.from.id);
-    db[ctx.from.id].bookmark = { bId, cId }; saveDB();
+    // Используем initUser для chat.id (в группах) или from.id (в личке)
+    const uid = ctx.from?.id ?? ctx.chat?.id;
+    initUser(uid);
+    db[uid].bookmark = { bId, cId };
+    saveDB();
     const text = `<b>☦️ ${getBookName(bId)}, Гл. ${cId}</b>\n━━━━━━━━━━━━━━━━\n\n` +
         chapter.Verses.map(v => `<b>${v.VerseId}</b> ${v.Text}`).join('\n\n');
     const nav = [];
@@ -677,6 +718,7 @@ bot.hears('Псалтирь', (ctx) => {
 });
 
 bot.hears('Закладка', (ctx) => {
+    initUser(ctx.chat.id);
     const b = db[ctx.chat.id]?.bookmark;
     if (b) return sendChapter(ctx, b.bId, b.cId, false);
     ctx.replyWithHTML(`<b>🔖 Закладок пока нет.</b>`);
@@ -710,10 +752,7 @@ bot.on('text', async (ctx, next) => {
     if (text.startsWith('/')) return next();
 
     initUser(ctx.from.id);
-
     if (!db[ctx.from.id].isSearching) return next();
-
-
     db[ctx.from.id].lastSearchQuery = text;
     saveDB();
 
@@ -730,14 +769,12 @@ bot.on('text', async (ctx, next) => {
 bot.action('do_bible_search', async (ctx) => {
     const userId = ctx.from.id;
     initUser(userId);
-
     const q = db[userId].lastSearchQuery ? db[userId].lastSearchQuery.trim().toLowerCase() : '';
     if (!q || q.length < 3) {
         db[userId].isSearching = false;
         saveDB();
         return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
     }
-
     let results = [];
     outer: for (const b of bibleData) {
         for (const c of b.Chapters) {
@@ -755,17 +792,13 @@ bot.action('do_bible_search', async (ctx) => {
             }
         }
     }
-
     db[userId].isSearching = false;
     db[userId].lastSearchQuery = '';
     saveDB();
-
     if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
-
     let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
     responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
     responseText += `────────────────────\n\n`;
-
     const buttons = [];
     results.forEach((res, index) => {
         const itemNumber = index + 1;
@@ -773,7 +806,6 @@ bot.action('do_bible_search', async (ctx) => {
         responseText += `<blockquote>${res.text}</blockquote>\n`;
         buttons.push([Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)]);
     });
-
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
@@ -979,13 +1011,17 @@ async function sendTheophanMessage() {
                 disable_web_page_preview: true
             });
         } catch (e) {
-
+            // ignore
         }
     }
 }
 
-
-schedule.scheduleJob('28 12 * * *', sendTheophanMessage);
+// Запуск "мысли дня" по московскому времени 12:34
+const { DateTime } = require('luxon');
+schedule.scheduleJob(
+    { tz: 'Europe/Moscow', hour: 12, minute: 44, second: 0 },
+    sendTheophanMessage
+);
 
 
 
