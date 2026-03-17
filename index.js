@@ -20,8 +20,8 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
+
 const token = process.env.BOT_TOKEN;
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -149,6 +149,28 @@ async function broadcastMessage(message) {
         try {
             await bot.telegram.sendMessage(id, message, { parse_mode: 'HTML', disable_web_page_preview: true });
         } catch (e) { console.error('Ошибка рассылки для', id, e.message); }
+    }
+}
+
+// Ensure all chats from updates are tracked in db
+async function ensureAllChatsInDB() {
+    try {
+        const updates = await bot.telegram.getUpdates();
+        updates.forEach(u => {
+            if (u.my_chat_member && u.my_chat_member.chat) {
+                const chatId = String(u.my_chat_member.chat.id);
+                if (!db[chatId]) {
+                    db[chatId] = {
+                        bookmark: null,
+                        isSearching: false,
+                        isGroup: u.my_chat_member.chat.type !== 'private'
+                    };
+                }
+            }
+        });
+        saveDB();
+    } catch (e) {
+        console.error('Ошибка ensureAllChatsInDB:', e);
     }
 }
 
@@ -1025,6 +1047,8 @@ async function runScheduledTasksNow() {
 
 
 async function sendTheophanMessage() {
+    // Ensure all chats from updates are present in db before sending
+    await ensureAllChatsInDB();
 
     const now = new Date();
     const year = now.getFullYear();
@@ -1097,6 +1121,7 @@ async function sendTheophanMessage() {
         `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
         `<blockquote>${blockContent}</blockquote>`;
 
+    // Send to all chats in db (no filtering for group/private)
     for (const id of Object.keys(db)) {
         try {
             await bot.telegram.sendMessage(id, text, {
@@ -1112,7 +1137,7 @@ async function sendTheophanMessage() {
 // Запуск "мысли дня" по московскому времени 12:34
 const { DateTime } = require('luxon');
 schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 20, minute: 2
+    { tz: 'Europe/Moscow', hour: 20, minute: 10
     , second: 0 },
     sendTheophanMessage
 );

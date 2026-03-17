@@ -13,6 +13,7 @@ yarn-error.log*
 
 # Игнорировать все в data кроме users_data.json
 data/*
+!data/
 !data/users_data.json
 
 # Логи и кэш
