@@ -1019,7 +1019,7 @@ async function sendTheophanMessage() {
 // Запуск "мысли дня" по московскому времени 12:34
 const { DateTime } = require('luxon');
 schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 12, minute: 44, second: 0 },
+    { tz: 'Europe/Moscow', hour: 12, minute: 46, second: 0 },
     sendTheophanMessage
 );
 
