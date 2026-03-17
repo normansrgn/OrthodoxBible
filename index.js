@@ -71,6 +71,9 @@ if (fs.existsSync(fontPath)) {
 }
 
 
+
+
+
 const token = process.env.BOT_TOKEN;
 // const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
@@ -750,7 +753,7 @@ bot.start(async (ctx) => {
     // Личная беседа — показываем приветствие и кнопки
     const name = ctx.from.first_name || 'друг';
     const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
-        `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
+        `Добро пожаловать в <b>«Священное Писание</b>.\n\n` +
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
 
     await ctx.replyWithHTML(welcomeText, mainReplyMenu);
