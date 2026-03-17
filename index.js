@@ -28,8 +28,79 @@ if (!token) {
     process.exit(1);
 }
 
+
+// Helper: check if chat is private
+function isPrivate(ctx) {
+    return ctx.chat && ctx.chat.type === 'private';
+}
+
+
 const bot = new Telegraf(token);
-bot.use(session());
+
+// Welcome message when bot is added to a group
+bot.on('new_chat_members', async (ctx) => {
+    try {
+        const botId = ctx.botInfo.id;
+
+        const isBotAdded = ctx.message.new_chat_members.some(member => member.id === botId);
+        if (!isBotAdded) return;
+
+        const text =
+            `☦️ <b>Мир вашему дому, братия и сестры!</b>\n\n` +
+            `Благодарю за приглашение в этот чат.\n\n` +
+            `Я — православный помощник, созданный для:\n` +
+            `• чтения Священного Писания 📖\n` +
+            `• молитвенного правила 🙏\n` +
+            `• церковного календаря 📅\n\n` +
+            `🕊 <i>Для полноценного использования откройте меня в личных сообщениях.</i>\n\n` +
+            `Да благословит вас Господь!`;
+
+        await ctx.replyWithHTML(text, {
+            reply_markup: { remove_keyboard: true }
+        });
+    } catch (e) {
+        console.error('Group welcome error:', e);
+    }
+});
+
+// Global middleware: stricter group handling (warn only on text commands, allow service/non-text events)
+bot.use(async (ctx, next) => {
+    // allow service events (bot added, etc.)
+    if (ctx.message && ctx.message.new_chat_members) {
+        return next();
+    }
+
+    // allow non-text events (prevents false triggers)
+    if (!ctx.message || !ctx.message.text) {
+        return next();
+    }
+
+    // block ONLY text commands in groups
+    if (!isPrivate(ctx)) {
+        try {
+            await ctx.reply('⚠️ Используйте бота в личных сообщениях', { remove_keyboard: true });
+        } catch (e) {}
+        return;
+    }
+
+    return next();
+});
+
+// 📌 Сохраняем все чаты (личка + группы)
+bot.on('my_chat_member', (ctx) => {
+    const chatId = String(ctx.chat.id);
+
+    if (!db[chatId]) {
+        db[chatId] = {
+            bookmark: null,
+            isSearching: false,
+            isGroup: ctx.chat.type !== 'private'
+        };
+        saveDB();
+        console.log('✅ Новый чат добавлен:', chatId);
+    }
+});
+
 const DATA_FILE = './data/users_data.json';
 
 let db = {};
@@ -43,7 +114,8 @@ const ensureDataDir = () => {
 const loadDB = () => {
     ensureDataDir();
     if (fs.existsSync(DATA_FILE)) {
-        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
+        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
+        catch (e) { console.error('Ошибка чтения БД, создаём новую:', e.message); db = {}; }
     } else {
         // Создаем новую базу с тестовым админом
         db = {
@@ -76,7 +148,7 @@ async function broadcastMessage(message) {
     for (const id of ids) {
         try {
             await bot.telegram.sendMessage(id, message, { parse_mode: 'HTML', disable_web_page_preview: true });
-        } catch (e) {}
+        } catch (e) { console.error('Ошибка рассылки для', id, e.message); }
     }
 }
 
@@ -514,7 +586,7 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     const chapter = book?.Chapters.find(x => x.ChapterId === cId);
     if (!chapter) return;
     // Используем initUser для chat.id (в группах) или from.id (в личке)
-    const uid = ctx.from?.id ?? ctx.chat?.id;
+    const uid = String(ctx.from?.id ?? ctx.chat?.id);
     initUser(uid);
     db[uid].bookmark = { bId, cId };
     saveDB();
@@ -536,15 +608,26 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
 }
 
 
-bot.start((ctx) => {
-    initUser(ctx.chat.id);
-    saveDB();
+bot.start(async (ctx) => {
+    const chatId = String(ctx.chat.id);
+
+    initUser(chatId);
+
+    if (!isPrivate(ctx)) {
+        // В группе — ничего не показываем, можно только прислать календарь
+        const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+        await sendDynamicCalendar({
+            replyWithHTML: (text) => bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' })
+        }, now);
+        return;
+    }
+    // Личная беседа — показываем приветствие и кнопки
     const name = ctx.from.first_name || 'друг';
     const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
         `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
 
-    ctx.replyWithHTML(welcomeText, mainReplyMenu);
+    await ctx.replyWithHTML(welcomeText, mainReplyMenu);
 });
 
 bot.hears('📜 Закон Божий', (ctx) => {
@@ -589,20 +672,28 @@ bot.hears('📖 Библия', (ctx) => {
         `• сохранить место чтения в закладку\n\n` +
         `Выберите нужный раздел ниже.`;
 
+    if (!isPrivate(ctx)) {
+        return ctx.reply(text, { remove_keyboard: true });
+    }
     ctx.replyWithHTML(text, bibleMenu);
 });
 
 bot.hears('⬅️ Главное меню', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🏠 Главное меню', { remove_keyboard: true });
+    }
     ctx.reply('🏠 Главное меню', mainReplyMenu);
 });
 
 bot.hears('Чтение писания', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('📚 СВЯЩЕННОЕ ПИСАНИЕ\n\nВыберите раздел:', { remove_keyboard: true });
+    }
     ctx.replyWithHTML(`<b>📚 СВЯЩЕННОЕ ПИСАНИЕ</b>\n\nВыберите раздел:`, Markup.inlineKeyboard([[Markup.button.callback('📜 Ветхий Завет', 'test_old'), Markup.button.callback('📖 Новый Завет', 'test_new')]]));
 });
 
 
 bot.hears('Календарь', async (ctx) => {
-
     const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     await sendDynamicCalendar(ctx, now);
 });
@@ -634,9 +725,7 @@ bot.hears('Молитвослов', (ctx) => {
 });
 
 bot.hears('Случайный стих', async (ctx) => {
-
     if (!bibleData.length) return;
-
 
     const gospels = bibleData.filter(b => b.BookId >= 40 && b.BookId <= 43);
     const psalms = bibleData.filter(b => b.BookId === 19);
@@ -666,7 +755,6 @@ bot.hears('Случайный стих', async (ctx) => {
     const chapter = book.Chapters[Math.floor(Math.random() * book.Chapters.length)];
 
     let startIndex = Math.floor(Math.random() * chapter.Verses.length);
-
 
     if (startIndex > 0) {
         const prev = chapter.Verses[startIndex].Text.trim()[0];
@@ -702,6 +790,9 @@ bot.hears('Случайный стих', async (ctx) => {
             ? `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}`
             : `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}-${last}`;
 
+    if (!isPrivate(ctx)) {
+        return ctx.reply('☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ', { remove_keyboard: true });
+    }
     await ctx.replyWithHTML(
         `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
         Markup.inlineKeyboard([
@@ -709,15 +800,20 @@ bot.hears('Случайный стих', async (ctx) => {
             [Markup.button.callback('📖 Открыть главу', `read_${book.BookId}_${chapter.ChapterId}`)]
         ])
     );
-
 });
 
 bot.hears('Псалтирь', (ctx) => {
     const buttons = PSALMS_CATEGORIES.map((cat, idx) => [Markup.button.callback(cat.name, `ps_cat_${idx}`)]);
+    if (!isPrivate(ctx)) {
+        return ctx.reply('Псалтирь на всякую потребу', { remove_keyboard: true });
+    }
     ctx.replyWithHTML(`<b>Псалтирь на всякую потребу</b>`, Markup.inlineKeyboard(buttons));
 });
 
 bot.hears('Закладка', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🔖 Закладок пока нет.', { remove_keyboard: true });
+    }
     initUser(ctx.chat.id);
     const b = db[ctx.chat.id]?.bookmark;
     if (b) return sendChapter(ctx, b.bId, b.cId, false);
@@ -725,6 +821,9 @@ bot.hears('Закладка', (ctx) => {
 });
 
 bot.hears('Поиск', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ', { remove_keyboard: true });
+    }
     initUser(ctx.from.id);
     db[ctx.from.id].isSearching = true;
     saveDB();
@@ -743,11 +842,11 @@ bot.hears('Поиск', (ctx) => {
 
 
 bot.on('text', async (ctx, next) => {
-
+    // Only handle in private chats
+    if (!isPrivate(ctx)) return;
     const menuButtons = ['📖 Библия', '📜 Закон Божий', 'Молитвослов', 'Календарь', 'Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
     const text = ctx.message?.text || '';
     if (menuButtons.includes(text)) return next();
-
 
     if (text.startsWith('/')) return next();
 
@@ -755,7 +854,6 @@ bot.on('text', async (ctx, next) => {
     if (!db[ctx.from.id].isSearching) return next();
     db[ctx.from.id].lastSearchQuery = text;
     saveDB();
-
 
     await ctx.replyWithHTML("🔎 <b>Теперь нажмите кнопку «Поиск» ниже для выполнения поиска.</b>",
         Markup.inlineKeyboard([
@@ -773,6 +871,9 @@ bot.action('do_bible_search', async (ctx) => {
     if (!q || q.length < 3) {
         db[userId].isSearching = false;
         saveDB();
+        if (!isPrivate(ctx)) {
+            return ctx.reply("🕊 Введите минимум 3 символа для поиска.", { remove_keyboard: true });
+        }
         return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
     }
     let results = [];
@@ -795,7 +896,12 @@ bot.action('do_bible_search', async (ctx) => {
     db[userId].isSearching = false;
     db[userId].lastSearchQuery = '';
     saveDB();
-    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+    if (!results.length) {
+        if (!isPrivate(ctx)) {
+            return ctx.reply("🕊 Ничего не найдено. Попробуйте другое слово.", { remove_keyboard: true });
+        }
+        return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+    }
     let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
     responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
     responseText += `────────────────────\n\n`;
@@ -806,6 +912,9 @@ bot.action('do_bible_search', async (ctx) => {
         responseText += `<blockquote>${res.text}</blockquote>\n`;
         buttons.push([Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)]);
     });
+    if (!isPrivate(ctx)) {
+        return ctx.reply("🔎 РЕЗУЛЬТАТЫ ПОИСКА", { remove_keyboard: true });
+    }
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
@@ -865,6 +974,15 @@ bot.command('admin', (ctx, next) => {
     console.log(`[ADMIN] /admin команда вызвана пользователем:`, ctx.from);
     return next();
 });
+
+
+// ⏰ Каждый день в 10:00 по Москве
+schedule.scheduleJob(
+    { tz: 'Europe/Moscow', hour: 19, minute: 50 },
+    sendDailyCalendarToGroups
+);
+
+
 
 bot.telegram.deleteWebhook().then(() => {
     bot.launch().then(async () => {
@@ -941,15 +1059,10 @@ async function sendTheophanMessage() {
         return;
     }
 
-
-
     const he = require('he');
     let htmlText = he.decode(apiData.text);
 
-
-
-    const cheerio = require('cheerio');
-
+    // const cheerio = require('cheerio'); // REMOVE duplicate require
     const allowedTags = ['a', 'b', 'i', 'u', 's', 'code', 'pre'];
 
     const $ = cheerio.load(`<div>${htmlText}</div>`, { decodeEntities: false });
@@ -985,7 +1098,6 @@ async function sendTheophanMessage() {
         return '';
     }
 
-
     let blockContent = '';
 
     const block = $('blockquote').first();
@@ -998,11 +1110,9 @@ async function sendTheophanMessage() {
 
     blockContent = blockContent.replace(/\n{3,}/g, '\n\n').trim();
 
-
     const message =
         `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
         `<blockquote>${blockContent}</blockquote>`;
-
 
     for (const id of Object.keys(db)) {
         try {
@@ -1011,7 +1121,7 @@ async function sendTheophanMessage() {
                 disable_web_page_preview: true
             });
         } catch (e) {
-            // ignore
+            console.error('Ошибка отправки мысли дня:', id, e.message);
         }
     }
 }
@@ -1026,11 +1136,8 @@ schedule.scheduleJob(
 
 
 
-bot.hears('Календарь', async (ctx) => {
-    // Московское время (UTC+3)
-    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    await sendDynamicCalendar(ctx, now);
-});
+
+// (SECOND occurrence deleted)
 
 bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
     try {
@@ -1112,8 +1219,8 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
     const kb = Markup.inlineKeyboard([
         [
-            Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
-            Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
+            Markup.button.callback('⬅️ Вчера', `calendar_prev_${prevStr}`),
+            Markup.button.callback('Завтра ➡️', `calendar_next_${nextStr}`)
         ],
         [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
@@ -1140,4 +1247,32 @@ async function safeMassSend(bot, ids, sendFunc, pauseMs = 200) {
         }
         await new Promise(r => setTimeout(r, pauseMs));
     }
+}
+
+
+async function sendDailyCalendarToGroups() {
+    console.log('📅 Началась рассылка календаря в группы...');
+
+    const ids = Object.keys(db);
+
+    for (const id of ids) {
+        try {
+            // отправляем только в группы
+            if (!db[id]?.isGroup) continue;
+
+            const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
+
+            // Отправляем календарь без кнопок (extra)
+            await sendDynamicCalendar({
+                replyWithHTML: (text) => bot.telegram.sendMessage(id, text, {
+                    parse_mode: 'HTML'
+                })
+            }, date);
+
+        } catch (e) {
+            console.log('❌ Ошибка отправки в:', id, e);
+        }
+    }
+
+    console.log('✅ Календарь отправлен всем группам');
 }
