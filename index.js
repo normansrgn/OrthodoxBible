@@ -7,10 +7,8 @@ const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
 
-// --- Octokit initialization (Railway/Cloud-friendly) ---
+// --- Octokit initialization (Railway/Cloud-friendly, ENV-only) ---
 let octokit;
-let GITHUB_TOKEN_OK = false;
-let GIST_ID_OK = false;
 
 async function checkOctokitAndGist({ exitOnError = false } = {}) {
     const token = process.env.GITHUB_TOKEN;
@@ -30,8 +28,6 @@ async function checkOctokitAndGist({ exitOnError = false } = {}) {
     // Проверим доступ к Gist
     try {
         await octokit.gists.get({ gist_id: gistId });
-        GITHUB_TOKEN_OK = true;
-        GIST_ID_OK = true;
         return true;
     } catch (e) {
         if (e.status === 404) {
@@ -41,8 +37,6 @@ async function checkOctokitAndGist({ exitOnError = false } = {}) {
         } else {
             console.error('❌ Ошибка при проверке Gist:', e.message);
         }
-        GITHUB_TOKEN_OK = false;
-        GIST_ID_OK = false;
         if (exitOnError && typeof process !== "undefined" && process.exit) process.exit(1);
         return false;
     }
@@ -50,13 +44,16 @@ async function checkOctokitAndGist({ exitOnError = false } = {}) {
 
 // Startup logic: check env vars, octokit, and load DB
 (async () => {
-    const ok = await checkOctokitAndGist({ exitOnError: true });
+    // Проверяем только переменные окружения, без файлов
+    const ok = await checkOctokitAndGist({ exitOnError: false });
     if (!ok) {
-        // process.exit(1) already called if exitOnError
-        return;
+        // Не вызываем exit на этапе сборки, только логируем
+        console.error('❌ Не удалось инициализировать Octokit или получить доступ к Gist. Бот не сможет сохранять данные без GITHUB_TOKEN и GIST_ID.');
+    } else {
+        await loadDBFromGist();
+        console.log('✅ DB успешно загружена с Gist');
     }
-    await loadDBFromGist();
-    // The rest of your startup code
+    // Бот стартует в любом случае, exit только если реально нужен токен в рантайме
     bot.telegram.deleteWebhook().then(() => {
         bot.launch().then(async () => {
             console.log('☦️ Бот запущен');
@@ -186,7 +183,7 @@ async function broadcastMessage(message) {
 }
 
 async function loadDBFromGist() {
-    // Проверяем валидность токена и Gist перед загрузкой
+    // Только переменные окружения, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
         console.error('❌ Нет доступа к Gist или токену. DB не загружена. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
         db = {};
@@ -195,11 +192,9 @@ async function loadDBFromGist() {
     try {
         const res = await octokit.gists.get({ gist_id: process.env.GIST_ID });
         let fileContent = '{}';
-        // Check if file exists in gist
         if (res.data.files && res.data.files[GIST_FILE]) {
             fileContent = res.data.files[GIST_FILE].content;
         } else {
-            // File does not exist in Gist, create it with empty object
             await octokit.gists.update({
                 gist_id: process.env.GIST_ID,
                 files: { [GIST_FILE]: { content: '{}' } }
@@ -210,7 +205,6 @@ async function loadDBFromGist() {
         db = JSON.parse(fileContent);
         console.log('✅ DB загружена с Gist');
     } catch (e) {
-        // If gist not found or file not found, try to create file
         if (e.status === 404) {
             try {
                 await octokit.gists.update({
@@ -231,14 +225,13 @@ async function loadDBFromGist() {
 }
 
 async function saveDBToGist() {
-    // Проверяем валидность токена и Gist перед сохранением
+    // Только переменные окружения, никаких файлов
     if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
         console.error('❌ Нет доступа к Gist или токену. Сохранение DB не выполняется. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
         return;
     }
     try {
         const content = JSON.stringify(db, null, 2);
-        // First, get the gist and check if file exists
         let gist;
         try {
             gist = await octokit.gists.get({ gist_id: process.env.GIST_ID });
@@ -247,10 +240,8 @@ async function saveDBToGist() {
         }
         let files = {};
         if (gist && gist.data.files && gist.data.files[GIST_FILE]) {
-            // File exists, update as usual
             files[GIST_FILE] = { content };
         } else {
-            // File does not exist, create it with {} if db is empty, else with current db
             files[GIST_FILE] = { content: content || '{}' };
         }
         await octokit.gists.update({
@@ -259,7 +250,6 @@ async function saveDBToGist() {
         });
         console.log('✅ DB сохранена на Gist');
     } catch (e) {
-        // If file not found, attempt to create it
         if (e.status === 404) {
             try {
                 await octokit.gists.update({
