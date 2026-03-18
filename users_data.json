@@ -211,6 +211,17 @@
           "username": "vartrt"
         }
       }
+    },
+    "-1003871885941": {
+      "title": "Православие",
+      "type": "supergroup",
+      "members": {
+        "8524625728": {
+          "name": "Вардан",
+          "username": "vartrt"
+        }
+      },
+      "welcomeSentAt": 1773857084065
     }
   }
 }

@@ -7,6 +7,32 @@ const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
 
+function getMoscowParts(date = new Date()) {
+    // Используем реальный часовой пояс, без ручного "+3 часа"
+    const dtf = new Intl.DateTimeFormat('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'long'
+    });
+    const parts = dtf.formatToParts(date);
+    const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    return {
+        year: Number(map.year),
+        month: Number(map.month),
+        day: Number(map.day),
+        weekday: map.weekday
+    };
+}
+
+function toMoscowNoonDate(year, month, day) {
+    const mm = String(month).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    // Полдень по Москве, чтобы исключить пограничные эффекты около полуночи
+    return new Date(`${year}-${mm}-${dd}T12:00:00+03:00`);
+}
+
 // --- НАСТРОЙКА ШРИФТА ---
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
 
@@ -195,7 +221,7 @@ bot.use(async (ctx, next) => {
 });
 
 // --- ЛОГ: ДОБАВЛЕНИЕ БОТА В ГРУППУ ---
-bot.on('my_chat_member', (ctx) => {
+bot.on('my_chat_member', async (ctx) => {
     try {
         const upd = ctx.myChatMember;
         if (!upd || !ctx.chat) return;
@@ -204,12 +230,56 @@ bot.on('my_chat_member', (ctx) => {
 
         const oldStatus = upd.old_chat_member?.status;
         const newStatus = upd.new_chat_member?.status;
+        const isMemberFlag = upd.new_chat_member?.is_member;
 
-        const becameMember =
-            ['member', 'administrator'].includes(newStatus) &&
-            (!oldStatus || ['left', 'kicked', 'restricted'].includes(oldStatus));
+        // Telegram иногда добавляет бота как restricted (с is_member=true).
+        const isNowInChat =
+            ['member', 'administrator'].includes(newStatus) ||
+            (newStatus === 'restricted' && isMemberFlag === true);
+
+        const wasOutOfChat =
+            !oldStatus || ['left', 'kicked'].includes(oldStatus) ||
+            (oldStatus === 'restricted' && upd.old_chat_member?.is_member === false);
+
+        const becameMember = isNowInChat && wasOutOfChat;
 
         if (!becameMember) return;
+
+        // Обновляем локальную БД групп и ставим флаг приветствия (чтобы не дублировать)
+        try {
+            loadDB();
+            if (!db.__groups || typeof db.__groups !== 'object') db.__groups = {};
+            const chatId = String(ctx.chat.id);
+            if (!db.__groups[chatId]) {
+                db.__groups[chatId] = { title: ctx.chat.title || 'Группа', type: ctx.chat.type, members: {} };
+            }
+            db.__groups[chatId].title = ctx.chat.title || db.__groups[chatId].title || 'Группа';
+            db.__groups[chatId].type = ctx.chat.type || db.__groups[chatId].type;
+            const now = Date.now();
+            const alreadyWelcomedRecently =
+                db.__groups[chatId].welcomeSentAt && now - db.__groups[chatId].welcomeSentAt < 60_000;
+            if (!alreadyWelcomedRecently) {
+                db.__groups[chatId].welcomeSentAt = now;
+            }
+            saveDB();
+            scheduleGistSave('group_join');
+
+            if (!alreadyWelcomedRecently) {
+                const text =
+                    `☦️ <b>Мир вашему дому, братия и сестры!</b>\n\n` +
+                    `Благодарю за приглашение в этот чат.\n\n` +
+                    `Я — православный помощник, созданный для:\n` +
+                    `• чтения Священного Писания 📖\n` +
+                    `• молитвенного правила 🙏\n` +
+                    `• церковного календаря 📅\n\n` +
+                    `🕊 Для полноценного использования откройте меня в личных сообщениях.\n\n` +
+                    `Да благословит вас Господь!`;
+
+                await ctx.replyWithHTML(text).catch(() => {});
+            }
+        } catch (e) {
+            console.error('❌ Ошибка приветствия в группе:', e?.message || e);
+        }
 
         console.log(
             '➕ Bot added/returned to group:',
@@ -533,12 +603,14 @@ const cheerio = require('cheerio'); // не забудьте npm install cheerio
 
 // Исправленная функция для получения календаря с корректным парсом "Святые дня"
 async function getDetailedCalendar() {
-    // Используем московское время (UTC+3)
-    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const day = now.getDate();
-    const weekday = WEEKDAYS[now.getDay()];
+    const p = getMoscowParts(new Date());
+    const year = p.year;
+    const month = p.month;
+    const day = p.day;
+    const weekday = p.weekday
+        ? p.weekday[0].toUpperCase() + p.weekday.slice(1)
+        : WEEKDAYS[new Date().getDay()];
+    const now = toMoscowNoonDate(year, month, day);
     const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     let saints = [];
@@ -762,9 +834,7 @@ bot.hears('Чтение писания', (ctx) => {
 
 // --- Динамический календарь с кнопками Вчера/Завтра ---
 bot.hears('Календарь', async (ctx) => {
-    // Используем московское время (UTC+3)
-    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    await sendDynamicCalendar(ctx, now);
+    await sendDynamicCalendar(ctx);
 });
 
 bot.hears('Молитвослов', (ctx) => {
@@ -1195,9 +1265,7 @@ schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
 // Динамический календарь с кнопками «Вчера»/«Завтра»
 // Новый обработчик календаря: показывает только один день, безопасная обработка ошибок, кнопки для навигации
 bot.hears('Календарь', async (ctx) => {
-    // Московское время (UTC+3)
-    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    await sendDynamicCalendar(ctx, now);
+    await sendDynamicCalendar(ctx);
 });
 
 bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
@@ -1213,14 +1281,17 @@ bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
 });
 
 async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
-    // Используем московское время по умолчанию
+    // Используем московское время по умолчанию (Europe/Moscow)
     if (!dateObj) {
-        dateObj = new Date(Date.now() + 3 * 60 * 60 * 1000);
+        dateObj = new Date();
     }
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    const weekday = WEEKDAYS[dateObj.getDay()];
+    const p = getMoscowParts(dateObj);
+    const year = p.year;
+    const month = String(p.month).padStart(2, '0');
+    const day = String(p.day).padStart(2, '0');
+    const weekday = p.weekday
+        ? p.weekday[0].toUpperCase() + p.weekday.slice(1)
+        : WEEKDAYS[dateObj.getDay()];
     const azLink = `https://azbyka.ru/days/${year}-${month}-${day}`;
 
     // Получаем святых дня через API (безопасно)
@@ -1253,10 +1324,11 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
         }
     } catch (e) { saints = []; }
 
-    if (!saints.length) saints = getSaintsForDate(dateObj.getMonth() + 1, dateObj.getDate()).map(s => `• ${s}`);
+    if (!saints.length) saints = getSaintsForDate(p.month, p.day).map(s => `• ${s}`);
 
-    const oldStyle = getOldStyleDate(dateObj);
-    const fasting = getFastingInfo(dateObj, getOrthodoxPaschaDate(year));
+    const moscowNoon = toMoscowNoonDate(year, Number(month), Number(day));
+    const oldStyle = getOldStyleDate(moscowNoon);
+    const fasting = getFastingInfo(moscowNoon, getOrthodoxPaschaDate(year));
 
     let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
     text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${month} (${weekday})</i>\n`;
@@ -1272,12 +1344,14 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
 
     // Кнопки "Вчера"/"Завтра" — только один день за раз
-    const prevDate = new Date(dateObj);
-    prevDate.setDate(dateObj.getDate() - 1);
-    const nextDate = new Date(dateObj);
-    nextDate.setDate(dateObj.getDate() + 1);
-    const prevStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
-    const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
+    const prevDate = new Date(moscowNoon);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const nextDate = new Date(moscowNoon);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const prevP = getMoscowParts(prevDate);
+    const nextP = getMoscowParts(nextDate);
+    const prevStr = `${prevP.year}-${String(prevP.month).padStart(2, '0')}-${String(prevP.day).padStart(2, '0')}`;
+    const nextStr = `${nextP.year}-${String(nextP.month).padStart(2, '0')}-${String(nextP.day).padStart(2, '0')}`;
     const kb = Markup.inlineKeyboard([
         [
             Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
