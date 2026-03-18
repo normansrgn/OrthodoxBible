@@ -1107,7 +1107,7 @@ bot.command('admin', (ctx, next) => {
 
 // ⏰ Каждый день в 10:00 по Москве
 schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 10, minute: 0 },
+    { tz: 'Europe/Moscow', hour: 14, minute: 0 },
     sendDailyCalendarToGroups
 );
 
