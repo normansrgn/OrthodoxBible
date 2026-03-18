@@ -20,7 +20,7 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN;
 const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
@@ -574,6 +574,43 @@ bot.start((ctx) => {
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
 
     ctx.replyWithHTML(welcomeText, mainReplyMenu);
+});
+
+// --- ПРИВЕТСТВИЕ ПРИ ДОБАВЛЕНИИ В ГРУППУ ---
+bot.on('my_chat_member', (ctx) => {
+    try {
+        const update = ctx.myChatMember;
+        if (!update || !ctx.chat) return;
+
+        const isGroup =
+            ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        if (!isGroup) return;
+
+        const oldStatus = update.old_chat_member?.status;
+        const newStatus = update.new_chat_member?.status;
+
+        // бот был добавлен или возвращён в группу
+        const becameMember =
+            ['member', 'administrator'].includes(newStatus) &&
+            (!oldStatus ||
+                ['left', 'kicked', 'restricted'].includes(oldStatus));
+
+        if (!becameMember) return;
+
+        const text =
+            `☦️ <b>Мир вашему дому, братия и сестры!</b>\n\n` +
+            `Благодарю за приглашение в этот чат.\n\n` +
+            `Я — православный помощник, созданный для:\n` +
+            `• чтения Священного Писания 📖\n` +
+            `• молитвенного правила 🙏\n` +
+            `• церковного календаря 📅\n\n` +
+            `🕊 Для полноценного использования откройте меня в личных сообщениях.\n\n` +
+            `Да благословит вас Господь!`;
+
+        ctx.replyWithHTML(text).catch(() => {});
+    } catch (e) {
+        // игнорируем ошибки приветствия
+    }
 });
 
 bot.hears('📜 Закон Божий', (ctx) => {

@@ -110,7 +110,7 @@ function adminPanel(bot) {
 
     // Команда /admin — всегда открывает панель, чтобы она точно срабатывала
     bot.command('admin', (ctx) => {
-        console.log('[ADMIN] /admin received from', ctx.from);
+
         return sendMain(ctx);
     });
 
