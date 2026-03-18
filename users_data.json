@@ -1,0 +1,36 @@
+{
+  "481356531": {
+    "bookmark": null,
+    "isSearching": false,
+    "first_name": "Վ ☦︎ ורדאן",
+    "username": "fohci"
+  },
+  "8524625728": {
+    "bookmark": null,
+    "isSearching": false,
+    "first_name": "Вардан",
+    "username": "vartrt"
+  },
+  "__groups": {
+    "-5296099749": {
+      "title": "йоц",
+      "type": "group",
+      "members": {
+        "8524625728": {
+          "name": "Вардан",
+          "username": "vartrt"
+        }
+      }
+    },
+    "-1003828533503": {
+      "title": "qw",
+      "type": "supergroup",
+      "members": {
+        "8524625728": {
+          "name": "Вардан",
+          "username": "vartrt"
+        }
+      }
+    }
+  }
+}
