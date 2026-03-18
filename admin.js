@@ -62,11 +62,6 @@ function getGroups() {
 }
 
 function isAdmin(ctx) {
-    // В личке с ботом считаем пользователя админом,
-    // а в группах — только из списка ADMIN_IDS
-    if (ctx.chat && ctx.chat.type === 'private') {
-        return true;
-    }
     return ctx.from && ADMIN_IDS.includes(ctx.from.id);
 }
 
@@ -154,10 +149,13 @@ function adminPanel(bot) {
     };
 
     // Команда /admin — всегда открывает панель, чтобы она точно срабатывала
-    bot.command('admin', (ctx) => {
+   bot.command('admin', (ctx) => {
+    if (!isAdmin(ctx)) {
+        return ctx.reply('⛔️ У тебя нет доступа');
+    }
 
-        return sendMain(ctx);
-    });
+    return sendMain(ctx);
+});
 
     bot.action('admin_users', async (ctx) => {
         if (!isAdmin(ctx)) return;

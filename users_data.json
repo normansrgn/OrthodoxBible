@@ -24,6 +24,12 @@
     "bookmark": null,
     "isSearching": false
   },
+  "751657159": {
+    "bookmark": null,
+    "isSearching": false,
+    "first_name": "k",
+    "username": "ssayuuri"
+  },
   "808745792": {
     "bookmark": {
       "bId": 41,
@@ -220,8 +226,7 @@
           "name": "Вардан",
           "username": "vartrt"
         }
-      },
-      "welcomeSentAt": 1773857084065
+      }
     }
   }
 }
