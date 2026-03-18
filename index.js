@@ -1,3 +1,4 @@
+require('dotenv').config();
 const schedule = require('node-schedule');
 const { Telegraf, Markup } = require('telegraf');
 const { session } = require('telegraf');
@@ -6,7 +7,56 @@ const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
 
-// --- НАСТРОЙКА ШРИФТА ---
+// --- Octokit initialization (ENV-only, no file IO) ---
+let octokit;
+
+async function checkOctokitAndGist({ exitOnError = false } = {}) {
+    const token = process.env.GITHUB_TOKEN;
+    const gistId = process.env.GIST_ID;
+    let ok = true;
+    if (!token) {
+        console.error('❌ Переменная окружения GITHUB_TOKEN не установлена. Укажите токен GitHub в GITHUB_TOKEN.');
+        ok = false;
+    }
+    if (!gistId) {
+        console.error('❌ Переменная окружения GIST_ID не установлена. Укажите ID Gist в GIST_ID.');
+        ok = false;
+    }
+    if (!ok) return false;
+    try {
+        const { Octokit } = await import('@octokit/rest');
+        octokit = new Octokit({ auth: token });
+        await octokit.gists.get({ gist_id: gistId });
+        return true;
+    } catch (e) {
+        if (e.status === 404) console.error('❌ Указанный GIST_ID не найден или недоступен для этого токена.');
+        else if (e.status === 401 || e.status === 403) console.error('❌ Недостаточно прав для доступа к Gist. Проверьте GITHUB_TOKEN.');
+        else console.error('❌ Ошибка при проверке Gist:', e.message);
+        return false;
+    }
+}
+
+// Startup logic: check env vars, octokit, and load DB (ENV-only, no file IO)
+(async () => {
+    await checkOctokitAndGist({ exitOnError: false });
+    if (octokit && process.env.GITHUB_TOKEN && process.env.GIST_ID) {
+        await loadDBFromGist();
+        console.log('✅ DB успешно загружена с Gist');
+    } else {
+        console.error('❌ Не удалось инициализировать Octokit или получить доступ к Gist. Бот не сможет сохранять данные без GITHUB_TOKEN и GIST_ID.');
+    }
+    bot.telegram.deleteWebhook().then(() => {
+        bot.launch().then(async () => {
+            console.log('☦️ Бот запущен');
+            await runScheduledTasksNow();
+        });
+    });
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+})();
+
+
+
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
 
 if (fs.existsSync(fontPath)) {
@@ -20,8 +70,12 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+
+
+
+
 const token = process.env.BOT_TOKEN;
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 
 if (!token) {
@@ -29,82 +83,207 @@ if (!token) {
     process.exit(1);
 }
 
+
+// Helper: check if chat is private
+function isPrivate(ctx) {
+    return ctx.chat && ctx.chat.type === 'private';
+}
+
+
 const bot = new Telegraf(token);
-bot.use(session());
-const DATA_FILE = './users_data.json';
 
-// --- БАЗА ДАННЫХ ---
-let db = {};
-const loadDB = () => {
-    if (fs.existsSync(DATA_FILE)) {
-        try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { db = {}; }
-    } else {
-        db = {};
-    }
-};
-
-const saveDB = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-
-const ensureUserProfile = (from) => {
-    if (!from || !from.id) return;
-    const id = from.id;
-    if (!db[id]) {
-        db[id] = { bookmark: null, isSearching: false };
-    }
-    const user = db[id];
-    // сохраняем базовую информацию о пользователе для админки
-    if (from.first_name) user.first_name = from.first_name;
-    if (from.last_name) user.last_name = from.last_name;
-    if (from.username) user.username = from.username;
-};
-
-const initUser = (id) => {
-    if (!db[id]) db[id] = { bookmark: null, isSearching: false };
-};
-
-loadDB();
-
-// --- ОТСЛЕЖИВАНИЕ ГРУПП И ПОЛЬЗОВАТЕЛЕЙ ---
-bot.use((ctx, next) => {
+// Welcome message when bot is added to a group
+bot.on('new_chat_members', async (ctx) => {
     try {
-        loadDB();
-        if (ctx.from) {
-            ensureUserProfile(ctx.from);
-        }
-        if (ctx.chat && (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup')) {
-            if (!db.__groups || typeof db.__groups !== 'object') {
-                db.__groups = {};
-            }
-            const chatId = ctx.chat.id;
-            if (!db.__groups[chatId]) {
-                db.__groups[chatId] = {
-                    title: ctx.chat.title || 'Группа',
-                    type: ctx.chat.type,
-                    members: {}
-                };
-            } else {
-                // обновляем название, если оно изменилось
-                if (ctx.chat.title) {
-                    db.__groups[chatId].title = ctx.chat.title;
-                }
-            }
-            if (ctx.from && ctx.from.id) {
-                const uid = ctx.from.id;
-                const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ') || null;
-                db.__groups[chatId].members[uid] = {
-                    name,
-                    username: ctx.from.username || null
-                };
-            }
-        }
-        saveDB();
+        const botId = ctx.botInfo.id;
+
+        const isBotAdded = ctx.message.new_chat_members.some(member => member.id === botId);
+        if (!isBotAdded) return;
+
+        const text =
+            `☦️ <b>Мир вашему дому, братия и сестры!</b>\n\n` +
+            `Благодарю за приглашение в этот чат.\n\n` +
+            `Я — православный помощник, созданный для:\n` +
+            `• чтения Священного Писания 📖\n` +
+            `• молитвенного правила 🙏\n` +
+            `• церковного календаря 📅\n\n` +
+            `🕊 <i>Для полноценного использования откройте меня в личных сообщениях.</i>\n\n` +
+            `Да благословит вас Господь!`;
+
+        await ctx.replyWithHTML(text, {
+            reply_markup: { remove_keyboard: true }
+        });
     } catch (e) {
-        // игнорируем ошибки логирования групп
+        console.error('Group welcome error:', e);
     }
+});
+
+// Global middleware: stricter group handling (warn only on text commands, allow service/non-text events)
+bot.use(async (ctx, next) => {
+    // allow service events (bot added, etc.)
+    if (ctx.message && ctx.message.new_chat_members) {
+        return next();
+    }
+
+    // allow non-text events (prevents false triggers)
+    if (!ctx.message || !ctx.message.text) {
+        return next();
+    }
+
+    // block ONLY text commands in groups
+    if (!isPrivate(ctx)) {
+        try {
+            await ctx.reply('⚠️ Используйте бота в личных сообщениях', { remove_keyboard: true });
+        } catch (e) {}
+        return;
+    }
+
     return next();
 });
 
-// --- ДАННЫЕ БИБЛИИ ---
+// 📌 Сохраняем все чаты (личка + группы)
+bot.on('my_chat_member', async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    if (!db[chatId]) {
+        db[chatId] = { bookmark: null, isSearching: false, isGroup: ctx.chat.type !== 'private' };
+        await saveDBToGist();
+        console.log('✅ Чат добавлен:', chatId, ctx.chat.type);
+    }
+});
+
+const GIST_FILE = 'users_data.json'; // Ensure this matches the filename in your Gist exactly!
+let db = {}; // локальная копия базы
+
+const initUser = async (id) => {
+    if (!db[id]) {
+        db[id] = { bookmark: null, isSearching: false };
+        await saveDBToGist();
+    }
+};
+
+// Массовая рассылка сообщения всем пользователям и группам из db
+async function broadcastMessage(message) {
+    await loadDBFromGist();
+    await ensureAllChatsInDB();
+    const ids = Object.keys(db);
+    for (const id of ids) {
+        try {
+            await bot.telegram.sendMessage(id, message, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (e) { console.error('Ошибка рассылки для', id, e.message); }
+    }
+}
+
+// --- Gist DB functions: ENV-only, no file IO ---
+async function loadDBFromGist() {
+    if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
+        console.error('❌ Нет доступа к Gist или токену. DB не загружена. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.');
+        db = {};
+        return;
+    }
+    try {
+        const res = await octokit.gists.get({ gist_id: process.env.GIST_ID });
+        let fileContent = '{}';
+        if (res.data.files && res.data.files[GIST_FILE]) {
+            fileContent = res.data.files[GIST_FILE].content;
+        } else {
+            await octokit.gists.update({
+                gist_id: process.env.GIST_ID,
+                files: { [GIST_FILE]: { content: '{}' } }
+            });
+            fileContent = '{}';
+            console.log(`✅ Файл ${GIST_FILE} создан в Gist`);
+        }
+        db = JSON.parse(fileContent);
+        console.log('✅ DB загружена с Gist');
+    } catch (e) {
+        if (e.status === 404) {
+            try {
+                await octokit.gists.update({
+                    gist_id: process.env.GIST_ID,
+                    files: { [GIST_FILE]: { content: '{}' } }
+                });
+                db = {};
+                console.log(`✅ Файл ${GIST_FILE} автоматически создан в Gist`);
+            } catch (err) {
+                console.error('❌ Ошибка создания файла в Gist:', err.message);
+                db = {};
+            }
+        } else {
+            console.error('❌ Ошибка загрузки DB с Gist:', e.message);
+            db = {};
+        }
+    }
+}
+
+async function saveDBToGist() {
+    if (!octokit || !process.env.GITHUB_TOKEN || !process.env.GIST_ID) {
+        const errMsg = '❌ Нет доступа к Gist или токену. Сохранение DB не выполняется. Проверьте переменные окружения GITHUB_TOKEN и GIST_ID.';
+        console.error(errMsg);
+        return;
+    }
+    try {
+        const content = JSON.stringify(db, null, 2);
+        let gist;
+        try {
+            gist = await octokit.gists.get({ gist_id: process.env.GIST_ID });
+        } catch (e) {
+            gist = null;
+        }
+        let files = {};
+        if (gist && gist.data.files && gist.data.files[GIST_FILE]) {
+            files[GIST_FILE] = { content };
+        } else {
+            files[GIST_FILE] = { content: content || '{}' };
+        }
+        await octokit.gists.update({
+            gist_id: process.env.GIST_ID,
+            files
+        });
+        console.log('✅ DB сохранена на Gist');
+    } catch (e) {
+        if (e.status === 404) {
+            try {
+                await octokit.gists.update({
+                    gist_id: process.env.GIST_ID,
+                    files: { [GIST_FILE]: { content: '{}' } }
+                });
+                console.log(`✅ Файл ${GIST_FILE} автоматически создан в Gist`);
+            } catch (err) {
+                console.error('❌ Ошибка создания файла в Gist:', err.message);
+            }
+        } else {
+            console.error('❌ Ошибка сохранения DB на Gist:', e.message);
+        }
+    }
+}
+
+// Ensure all chats from updates are tracked in db
+async function ensureAllChatsInDB() {
+    try {
+        const updates = await bot.telegram.getUpdates();
+        updates.forEach(u => {
+            if (u.my_chat_member && u.my_chat_member.chat) {
+                const chatId = String(u.my_chat_member.chat.id);
+                if (!db[chatId]) {
+                    db[chatId] = {
+                        bookmark: null,
+                        isSearching: false,
+                        isGroup: u.my_chat_member.chat.type !== 'private'
+                    };
+                }
+            }
+        });
+        await saveDBToGist();
+    } catch (e) {
+        console.error('Ошибка ensureAllChatsInDB:', e);
+    }
+}
+
+
+
+// -- END of moved IIFE, rest of the code continues as before --
+
+
 let bibleData = [];
 try {
     bibleData = JSON.parse(fs.readFileSync('./bible.json', 'utf8')).Books;
@@ -126,13 +305,10 @@ const PSALMS_CATEGORIES = [
     { name: 'О мире душевном', psalms: [22, 26, 36, 61] }
 ];
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-// Функция для генерации ссылок на толкования (Ekzeget.ru)
 function getInterpretationLink(bId, cId) {
     const name = getBookName(Number(bId)).trim();
 
-    // Ветхий Завет на сайте Лопухина имеет номера 01–39
     let bookNum = null;
 
     if (Number(bId) <= 39) {
@@ -177,8 +353,7 @@ function getInterpretationLink(bId, cId) {
         return "https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/";
     }
 
-    // Обработка: Псалтирь на сайте имеет другую структуру ссылок, 
-    // но для большинства книг работает формат ниже:
+
     if (bId === 19) {
         return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_19/${cId}`;
     }
@@ -186,7 +361,7 @@ function getInterpretationLink(bId, cId) {
     return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_${bookNum}/${cId}`;
 }
 
-// --- КАЛЕНДАРЬ ---
+
 function getOrthodoxPascha(year) {
     const a = year % 19, b = year % 4, c = year % 7;
     const d = (19 * a + 15) % 30;
@@ -195,9 +370,9 @@ function getOrthodoxPascha(year) {
     return f <= 9 ? new Date(year, 3, 22 + f + 13) : new Date(year, 4, f - 9 + 13);
 }
 
-// Локальный массив с примерами памятей святых (можно расширить)
+
 const ORTHODOX_CALENDAR = [
-    // Пример: 7 января, Рождество Христово
+
     { month: 1, day: 7, saints: ['Рождество Господа Бога и Спаса нашего Иисуса Христа'] },
     { month: 1, day: 19, saints: ['Святое Богоявление (Крещение Господне)'] },
     { month: 4, day: 7, saints: ['Благовещение Пресвятой Богородицы'] },
@@ -206,51 +381,50 @@ const ORTHODOX_CALENDAR = [
     { month: 9, day: 21, saints: ['Рождество Пресвятой Богородицы'] },
     { month: 9, day: 27, saints: ['Воздвижение Честного и Животворящего Креста Господня'] },
     { month: 12, day: 4, saints: ['Введение во храм Пресвятой Богородицы'] },
-    // ... можно добавить больше памятей
+
 ];
 
-// Вычисление даты Пасхи (православная Пасха, алгоритм для Юлианского календаря, сдвиг на 13 дней для Григорианского)
+
 function getOrthodoxPaschaDate(year) {
-    // Алгоритм Остроградского (Meeus/Jones/Butcher)
+
     const a = year % 19;
     const b = year % 4;
     const c = year % 7;
     const d = (19 * a + 15) % 30;
     const e = (2 * b + 4 * c + 6 * d + 6) % 7;
-    const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e)); // март (2) + дни
-    // Переводим в григорианский календарь (добавляем 13 дней для XXI века)
+    const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e)); 
+
     julianPascha.setUTCDate(julianPascha.getUTCDate() + 13);
     return new Date(julianPascha.getUTCFullYear(), julianPascha.getUTCMonth(), julianPascha.getUTCDate());
 }
 
-// Определение дня недели
+
 const WEEKDAYS = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
 
-// Определение седмицы, постов, трапезы и периода
+
 function getFastingInfo(date, paschaDate) {
-    // Великий пост: за 48 дней до Пасхи (Чистый понедельник), 7 недель
+
     const greatLentStart = new Date(paschaDate);
     greatLentStart.setDate(greatLentStart.getDate() - 48);
     const greatLentEnd = new Date(paschaDate);
-    greatLentEnd.setDate(greatLentEnd.getDate() - 2); // до Великой субботы
+    greatLentEnd.setDate(greatLentEnd.getDate() - 2); 
 
-    // Строгий пост: среда и пятница (кроме сплошных седмиц и праздничных дней)
-    // Петров пост: от понедельника через неделю после Троицы до 12 июля (Петра и Павла)
+
     const pentecost = new Date(paschaDate);
     pentecost.setDate(paschaDate.getDate() + 49);
     const petrovPostStart = new Date(pentecost);
     petrovPostStart.setDate(pentecost.getDate() + 1);
-    const petrovPostEnd = new Date(date.getFullYear(), 6, 12); // 12 июля
+    const petrovPostEnd = new Date(date.getFullYear(), 6, 12); 
 
-    // Успенский пост: 14–27 августа
+
     const uspenskyPostStart = new Date(date.getFullYear(), 7, 14);
     const uspenskyPostEnd = new Date(date.getFullYear(), 7, 27);
 
-    // Рождественский пост: 28 ноября – 6 января
+
     const christmasFastStart = new Date(date.getFullYear(), 10, 28);
     const christmasFastEnd = new Date(date.getFullYear() + 1, 0, 6);
 
-    // Сплошные седмицы (нет поста)
+
     const svjatkiStart = new Date(date.getFullYear(), 0, 7);
     const svjatkiEnd = new Date(date.getFullYear(), 0, 17);
     const maslenitsaStart = new Date(paschaDate);
@@ -262,13 +436,13 @@ function getFastingInfo(date, paschaDate) {
     const radonitsaEnd = new Date(paschaDate);
     radonitsaEnd.setDate(paschaDate.getDate() + 14);
 
-    // Проверки
+
     let fastType = '';
     let fastText = '';
     let period = '';
     let week = '';
 
-    // Пасха
+
     if (
         date.getDate() === paschaDate.getDate() &&
         date.getMonth() === paschaDate.getMonth()
@@ -280,7 +454,7 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Светлая седмица
+
     const svWeekStart = new Date(paschaDate);
     const svWeekEnd = new Date(paschaDate);
     svWeekEnd.setDate(paschaDate.getDate() + 6);
@@ -292,14 +466,14 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Великий пост
+
     if (date >= greatLentStart && date <= greatLentEnd) {
         period = 'Великий пост';
-        // Номер седмицы Великого поста
+
         const daysFromStart = Math.floor((date - greatLentStart) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Великого поста`;
-        // Постная трапеза
+
         if (date.getDay() === 0) {
             fastType = 'Послабление в пище (воскресенье)';
             fastText = 'Разрешается растительное масло, вино';
@@ -313,14 +487,14 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Петров пост
+
     if (petrovPostStart <= date && date <= petrovPostEnd) {
         period = 'Петров пост';
-        // Считаем седмицу от начала поста
+
         const daysFromStart = Math.floor((date - petrovPostStart) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Петрова поста`;
-        // Постная трапеза
+
         if (date.getDay() === 0 || date.getDay() === 6) {
             fastType = 'Послабление в пище (сб/вс)';
             fastText = 'Разрешается рыба, растительное масло, вино';
@@ -331,7 +505,7 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Успенский пост
+
     if (uspenskyPostStart <= date && date <= uspenskyPostEnd) {
         period = 'Успенский пост';
         const daysFromStart = Math.floor((date - uspenskyPostStart) / (1000 * 60 * 60 * 24));
@@ -347,10 +521,10 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Рождественский пост
+
     if ((date >= christmasFastStart && date.getMonth() === 10) || (date <= christmasFastEnd && date.getMonth() === 0)) {
         period = 'Рождественский пост';
-        // Номер седмицы считаем с 28 ноября
+
         let start = new Date(date.getFullYear(), 10, 28);
         if (date.getMonth() === 0) start = new Date(date.getFullYear() - 1, 10, 28);
         const daysFromStart = Math.floor((date - start) / (1000 * 60 * 60 * 24));
@@ -366,7 +540,7 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Сплошные седмицы
+
     if ((date >= svjatkiStart && date <= svjatkiEnd) ||
         (date >= maslenitsaStart && date <= maslenitsaEnd) ||
         (date >= radonitsaStart && date <= radonitsaEnd)) {
@@ -377,8 +551,8 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Обычные дни: пост по средам и пятницам
-    if (date.getDay() === 3 || date.getDay() === 5) { // среда (3), пятница (5)
+
+    if (date.getDay() === 3 || date.getDay() === 5) { 
         period = 'Обычный день';
         week = 'Постный день';
         fastType = 'Пост (среда/пятница)';
@@ -386,7 +560,7 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
-    // Обычный день, нет поста
+
     period = 'Обычный день';
     week = 'Нет поста';
     fastType = 'Поста нет';
@@ -394,25 +568,24 @@ function getFastingInfo(date, paschaDate) {
     return { period, week, fastType, fastText };
 }
 
-// Старый стиль (юлианский календарь)
+
 function getOldStyleDate(date) {
     const oldDate = new Date(date);
     oldDate.setDate(date.getDate() - 13);
     return oldDate;
 }
 
-// Получить список святых дня из массива ORTHODOX_CALENDAR (локальный fallback)
+
 function getSaintsForDate(month, day) {
     const found = ORTHODOX_CALENDAR.find(x => x.month === month && x.day === day);
     return found ? found.saints : [];
 }
 
-// Главная функция календаря
-const cheerio = require('cheerio'); // не забудьте npm install cheerio
 
-// Исправленная функция для получения календаря с корректным парсом "Святые дня"
+const cheerio = require('cheerio'); 
+
 async function getDetailedCalendar() {
-    // Используем московское время (UTC+3)
+
     const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -435,20 +608,18 @@ async function getDetailedCalendar() {
             }).on('error', () => resolve(null));
         });
         if (data && data.presentations) {
-            // Парсим только список святых, удаляя запрещённые теги Telegram
-            // Оставляем только <a>, <b>, <i>, <u>, <s>, <code>, <pre>, <span>
-            // (но используем только <a> для святых)
+
             const $ = cheerio.load(data.presentations, { decodeEntities: false });
             const arr = [];
-            // Удаляем фото, таблицы, картинки и запрещённые теги
+
             $('img, table, tbody, tr, td, th, style, script, iframe, object, embed, form, input, button, video, audio, figure, figcaption').remove();
-            // Собираем только <a> с именами святых
+
             $('a').each((i, el) => {
-                // Проверяем, что ссылка не пуста и текст не пустой
+
                 const name = $(el).text().trim();
                 const href = $(el).attr('href');
                 if (name) {
-                    // Только ссылки на жития (azbyka.ru) или просто имя
+
                     if (href && /^https?:\/\/azbyka\.ru/.test(href)) {
                         arr.push(`• <a href="${href}">${name}</a>`);
                     } else if (href && href.startsWith('/')) {
@@ -463,22 +634,22 @@ async function getDetailedCalendar() {
     } catch (e) {
         saints = [];
     }
-    // Если API не вернул данные, используем локальный fallback
+
     if (!saints.length) {
         saints = getSaintsForDate(month, day).map(s => `• ${s}`);
     }
-    // Старый стиль
+
     const oldStyle = getOldStyleDate(now);
-    // Пост, седмица, период — локальные вычисления
+
     const fasting = getFastingInfo(now, getOrthodoxPaschaDate(year));
-    // Формируем текст
+
     let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
     text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${String(month).padStart(2, '0')} (${weekday})</i>\n`;
     text += `────────────────────\n\n`;
     text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
     text += `<b>Период:</b> ${fasting.period}\n`;
     text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
-    // Святые дня
+
     if (saints.length) {
         text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
     } else {
@@ -526,9 +697,9 @@ async function createVerseCard(text, ref) {
     return canvas.toBuffer();
 }
 
-// --- КЛАВИАТУРЫ ---
+
 const mainReplyMenu = Markup.keyboard([
-    ['📖 Библия', '📜 Закон Божий'], // Добавили кнопку в первый ряд
+    ['📖 Библия', '📜 Закон Божий'], 
     ['Молитвослов', 'Календарь'],
     ['Поиск']
 ]).resize();
@@ -543,8 +714,11 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     const book = bibleData.find(x => x.BookId === bId);
     const chapter = book?.Chapters.find(x => x.ChapterId === cId);
     if (!chapter) return;
-    initUser(ctx.from.id);
-    db[ctx.from.id].bookmark = { bId, cId }; saveDB();
+    // Используем initUser для chat.id (в группах) или from.id (в личке)
+    const uid = String(ctx.from?.id ?? ctx.chat?.id);
+    await initUser(uid);
+    db[uid].bookmark = { bId, cId };
+    await saveDBToGist();
     const text = `<b>☦️ ${getBookName(bId)}, Гл. ${cId}</b>\n━━━━━━━━━━━━━━━━\n\n` +
         chapter.Verses.map(v => `<b>${v.VerseId}</b> ${v.Text}`).join('\n\n');
     const nav = [];
@@ -562,56 +736,27 @@ async function sendChapter(ctx, bId, cId, isEdit = true) {
     try { if (isEdit) await ctx.editMessageText(final, { parse_mode: 'HTML', ...kb }); else await ctx.replyWithHTML(final, kb); } catch (e) { await ctx.replyWithHTML(final, kb); }
 }
 
-// --- ОБРАБОТЧИКИ ---
-bot.start((ctx) => {
-    loadDB();
-    ensureUserProfile(ctx.from);
-    // Всегда храним пользователей по их user id, а не по chat id
-    initUser(ctx.from.id);
-    saveDB();
+
+bot.start(async (ctx) => {
+    const chatId = String(ctx.chat.id);
+
+    initUser(chatId);
+
+    if (!isPrivate(ctx)) {
+        // В группе — ничего не показываем, можно только прислать календарь
+        const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+        await sendDynamicCalendar({
+            replyWithHTML: (text) => bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' })
+        }, now);
+        return;
+    }
+    // Личная беседа — показываем приветствие и кнопки
     const name = ctx.from.first_name || 'друг';
     const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
-        `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
+        `Добро пожаловать в <b>«Священное Писание</b>.\n\n` +
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
 
-    ctx.replyWithHTML(welcomeText, mainReplyMenu);
-});
-
-// --- ПРИВЕТСТВИЕ ПРИ ДОБАВЛЕНИИ В ГРУППУ ---
-bot.on('my_chat_member', (ctx) => {
-    try {
-        const update = ctx.myChatMember;
-        if (!update || !ctx.chat) return;
-
-        const isGroup =
-            ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-        if (!isGroup) return;
-
-        const oldStatus = update.old_chat_member?.status;
-        const newStatus = update.new_chat_member?.status;
-
-        // бот был добавлен или возвращён в группу
-        const becameMember =
-            ['member', 'administrator'].includes(newStatus) &&
-            (!oldStatus ||
-                ['left', 'kicked', 'restricted'].includes(oldStatus));
-
-        if (!becameMember) return;
-
-        const text =
-            `☦️ <b>Мир вашему дому, братия и сестры!</b>\n\n` +
-            `Благодарю за приглашение в этот чат.\n\n` +
-            `Я — православный помощник, созданный для:\n` +
-            `• чтения Священного Писания 📖\n` +
-            `• молитвенного правила 🙏\n` +
-            `• церковного календаря 📅\n\n` +
-            `🕊 Для полноценного использования откройте меня в личных сообщениях.\n\n` +
-            `Да благословит вас Господь!`;
-
-        ctx.replyWithHTML(text).catch(() => {});
-    } catch (e) {
-        // игнорируем ошибки приветствия
-    }
+    await ctx.replyWithHTML(welcomeText, mainReplyMenu);
 });
 
 bot.hears('📜 Закон Божий', (ctx) => {
@@ -643,7 +788,7 @@ bot.hears('📜 Закон Божий', (ctx) => {
     });
 });
 
-// --- НАВИГАЦИЯ МЕНЮ ---
+
 bot.hears('📖 Библия', (ctx) => {
     const text =
         `<b>📖 СВЯЩЕННОЕ ПИСАНИЕ</b>\n` +
@@ -656,20 +801,28 @@ bot.hears('📖 Библия', (ctx) => {
         `• сохранить место чтения в закладку\n\n` +
         `Выберите нужный раздел ниже.`;
 
+    if (!isPrivate(ctx)) {
+        return ctx.reply(text, { remove_keyboard: true });
+    }
     ctx.replyWithHTML(text, bibleMenu);
 });
 
 bot.hears('⬅️ Главное меню', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🏠 Главное меню', { remove_keyboard: true });
+    }
     ctx.reply('🏠 Главное меню', mainReplyMenu);
 });
 
 bot.hears('Чтение писания', (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('📚 СВЯЩЕННОЕ ПИСАНИЕ\n\nВыберите раздел:', { remove_keyboard: true });
+    }
     ctx.replyWithHTML(`<b>📚 СВЯЩЕННОЕ ПИСАНИЕ</b>\n\nВыберите раздел:`, Markup.inlineKeyboard([[Markup.button.callback('📜 Ветхий Завет', 'test_old'), Markup.button.callback('📖 Новый Завет', 'test_new')]]));
 });
 
-// --- Динамический календарь с кнопками Вчера/Завтра ---
+
 bot.hears('Календарь', async (ctx) => {
-    // Используем московское время (UTC+3)
     const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
     await sendDynamicCalendar(ctx, now);
 });
@@ -701,10 +854,8 @@ bot.hears('Молитвослов', (ctx) => {
 });
 
 bot.hears('Случайный стих', async (ctx) => {
-
     if (!bibleData.length) return;
 
-    // --- ПРИОРИТЕТ КАК В YOUVERSION ---
     const gospels = bibleData.filter(b => b.BookId >= 40 && b.BookId <= 43);
     const psalms = bibleData.filter(b => b.BookId === 19);
     const proverbs = bibleData.filter(b => b.BookId === 20);
@@ -734,7 +885,6 @@ bot.hears('Случайный стих', async (ctx) => {
 
     let startIndex = Math.floor(Math.random() * chapter.Verses.length);
 
-    // защита от обрыва мысли
     if (startIndex > 0) {
         const prev = chapter.Verses[startIndex].Text.trim()[0];
         if (prev === prev.toLowerCase()) startIndex--;
@@ -769,6 +919,9 @@ bot.hears('Случайный стих', async (ctx) => {
             ? `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}`
             : `${getBookName(book.BookId)} ${chapter.ChapterId}:${first}-${last}`;
 
+    if (!isPrivate(ctx)) {
+        return ctx.reply('☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ', { remove_keyboard: true });
+    }
     await ctx.replyWithHTML(
         `<b>☦️ ДУХОВНОЕ НАСТАВЛЕНИЕ</b>\n\n<blockquote>${text}</blockquote>\n\n📍 <b>${ref}</b>`,
         Markup.inlineKeyboard([
@@ -776,26 +929,33 @@ bot.hears('Случайный стих', async (ctx) => {
             [Markup.button.callback('📖 Открыть главу', `read_${book.BookId}_${chapter.ChapterId}`)]
         ])
     );
-
 });
 
 bot.hears('Псалтирь', (ctx) => {
     const buttons = PSALMS_CATEGORIES.map((cat, idx) => [Markup.button.callback(cat.name, `ps_cat_${idx}`)]);
+    if (!isPrivate(ctx)) {
+        return ctx.reply('Псалтирь на всякую потребу', { remove_keyboard: true });
+    }
     ctx.replyWithHTML(`<b>Псалтирь на всякую потребу</b>`, Markup.inlineKeyboard(buttons));
 });
 
-bot.hears('Закладка', (ctx) => {
-    const b = db[ctx.from.id]?.bookmark;
+bot.hears('Закладка', async (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🔖 Закладок пока нет.', { remove_keyboard: true });
+    }
+    await initUser(ctx.chat.id);
+    const b = db[ctx.chat.id]?.bookmark;
     if (b) return sendChapter(ctx, b.bId, b.cId, false);
     ctx.replyWithHTML(`<b>🔖 Закладок пока нет.</b>`);
 });
 
-bot.hears('Поиск', (ctx) => {
-    loadDB();
-    ensureUserProfile(ctx.from);
-    initUser(ctx.from.id);
+bot.hears('Поиск', async (ctx) => {
+    if (!isPrivate(ctx)) {
+        return ctx.reply('🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ', { remove_keyboard: true });
+    }
+    await initUser(ctx.from.id);
     db[ctx.from.id].isSearching = true;
-    saveDB();
+    await saveDBToGist();
     const searchText = `<b>🔎 ПОИСК ПО СВЯЩЕННОМУ ПИСАНИЮ</b>\n` +
         `<i>«Исследуйте Писания...» (Ин. 5:39)</i>\n` +
         `────────────────────\n\n` +
@@ -809,51 +969,42 @@ bot.hears('Поиск', (ctx) => {
     ]));
 });
 
-// --- ОБРАБОТКА ТЕКСТА ДЛЯ ПОИСКА ---
+
 bot.on('text', async (ctx, next) => {
-    // Проверяем, что это не меню
+    // Only handle in private chats
+    if (!isPrivate(ctx)) return;
     const menuButtons = ['📖 Библия', '📜 Закон Божий', 'Молитвослов', 'Календарь', 'Поиск', 'Чтение писания', 'Случайный стих', 'Псалтирь', 'Закладка', '⬅️ Главное меню'];
-    if (menuButtons.includes(ctx.message.text)) {
-        return next();
-    }
+    const text = ctx.message?.text || '';
+    if (menuButtons.includes(text)) return next();
 
-    loadDB();
-    ensureUserProfile(ctx.from);
-    initUser(ctx.from.id);
-    // Если пользователь НЕ в режиме поиска, пропускаем дальше
-    if (!db[ctx.from.id].isSearching) {
-        return next();
-    }
+    if (text.startsWith('/')) return next();
 
-    // Сохраняем введённый запрос для последующего поиска
-    db[ctx.from.id].lastSearchQuery = ctx.message.text;
-    saveDB();
+    await initUser(ctx.from.id);
+    if (!db[ctx.from.id].isSearching) return next();
+    db[ctx.from.id].lastSearchQuery = text;
+    await saveDBToGist();
 
-    // Просим пользователя нажать кнопку "Поиск"
     await ctx.replyWithHTML("🔎 <b>Теперь нажмите кнопку «Поиск» ниже для выполнения поиска.</b>",
         Markup.inlineKeyboard([
             [Markup.button.callback('🔎 Поиск', 'do_bible_search')],
             [Markup.button.callback('🏠 В главное меню', 'start_over')]
         ])
     );
-
-    return next();
 });
 
-// --- КНОПКА "ПОИСК" ДЛЯ ЗАПУСКА ПОИСКА В БИБЛИИ ---
+
 bot.action('do_bible_search', async (ctx) => {
     const userId = ctx.from.id;
-    loadDB();
-    ensureUserProfile(ctx.from);
-    initUser(userId);
-    // Проверяем, был ли введён запрос
+    await initUser(userId);
     const q = db[userId].lastSearchQuery ? db[userId].lastSearchQuery.trim().toLowerCase() : '';
     if (!q || q.length < 3) {
         db[userId].isSearching = false;
-        saveDB();
+        await saveDBToGist();
+        if (!isPrivate(ctx)) {
+            return ctx.reply("🕊 Введите минимум 3 символа для поиска.", { remove_keyboard: true });
+        }
         return ctx.replyWithHTML("🕊 <b>Введите минимум 3 символа для поиска.</b>");
     }
-
     let results = [];
     outer: for (const b of bibleData) {
         for (const c of b.Chapters) {
@@ -871,17 +1022,18 @@ bot.action('do_bible_search', async (ctx) => {
             }
         }
     }
-
     db[userId].isSearching = false;
     db[userId].lastSearchQuery = '';
-    saveDB();
-
-    if (!results.length) return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
-
+    await saveDBToGist();
+    if (!results.length) {
+        if (!isPrivate(ctx)) {
+            return ctx.reply("🕊 Ничего не найдено. Попробуйте другое слово.", { remove_keyboard: true });
+        }
+        return ctx.replyWithHTML("🕊 <b>Ничего не найдено. Попробуйте другое слово.</b>");
+    }
     let responseText = `🔎 <b>РЕЗУЛЬТАТЫ ПОИСКА</b>\n`;
     responseText += `<i>Найдено совпадений: ${results.length}</i>\n`;
     responseText += `────────────────────\n\n`;
-
     const buttons = [];
     results.forEach((res, index) => {
         const itemNumber = index + 1;
@@ -889,11 +1041,13 @@ bot.action('do_bible_search', async (ctx) => {
         responseText += `<blockquote>${res.text}</blockquote>\n`;
         buttons.push([Markup.button.callback(`📖 Читать ${res.ref}`, `read_new_${res.bId}_${res.cId}`)]);
     });
-
+    if (!isPrivate(ctx)) {
+        return ctx.reply("🔎 РЕЗУЛЬТАТЫ ПОИСКА", { remove_keyboard: true });
+    }
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
-// --- CALLBACK ACTIONS ---
+
 bot.action(/ps_cat_(\d+)/, (ctx) => {
     const cat = PSALMS_CATEGORIES[+ctx.match[1]];
     const buttons = cat.psalms.map(p => Markup.button.callback(`Псалом ${p}`, `read_new_19_${p}`));
@@ -940,19 +1094,25 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
 
-bot.telegram.deleteWebhook().then(() => {
-    bot.launch().then(async () => {
-        console.log('☦️ Бот запущен');
-        // Тестовый однократный запуск задач при старте
-        await runScheduledTasksNow();
-    });
+
+const adminPanel = require('./admin');
+adminPanel(bot);
+
+
+bot.command('admin', (ctx, next) => {
+    console.log(`[ADMIN] /admin команда вызвана пользователем:`, ctx.from);
+    return next();
 });
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
+// ⏰ Каждый день в 10:00 по Москве
+schedule.scheduleJob(
+    { tz: 'Europe/Moscow', hour: 10, minute: 0 },
+    sendDailyCalendarToGroups
+);
 
-// --- SCHEDULED TASKS ---
+// (The above launch code is now inside the IIFE at the top)
+
 async function runScheduledTasksNow() {
     console.log('▶️ Запуск всех отложенных задач сразу после старта бота для проверки…');
     try {
@@ -979,14 +1139,12 @@ async function runScheduledTasksNow() {
     console.log('⏹ Ручной запуск всех отложенных задач завершён.');
 }
 
-/**
- * Отправляет мысль дня свт. Феофана Затворника всем пользователям из базы.
- * Получает HTML от API, разворачивает все теги кроме разрешённых (<a>, <b>, <i>, <u>, <s>, <code>, <pre>),
- * декодирует HTML entities, формирует сообщение с заголовком, датой и содержимым блока <blockquote>,
- * и отправляет всем пользователям.
- */
+
 async function sendTheophanMessage() {
-    // 1. Формируем дату и URL API
+    // Ensure all chats from updates are present in db before sending
+    await loadDBFromGist(); // обновляем список всех чатов
+    await ensureAllChatsInDB();
+
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -994,7 +1152,6 @@ async function sendTheophanMessage() {
     const dateStr = `${year}-${month}-${day}`;
     const url = `https://azbyka.ru/days/api/thoughts-st-theophan/${dateStr}.json`;
 
-    // 2. Получаем мысль дня через API
     let apiData = null;
     await new Promise((resolve) => {
         https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
@@ -1015,97 +1172,76 @@ async function sendTheophanMessage() {
         }).on('error', () => resolve());
     });
 
-    // 3. Если мысли нет — ничего не отправляем
     if (!apiData || !apiData.text || typeof apiData.text !== 'string' || !apiData.text.trim()) {
         return;
     }
 
-    // 4. Декодируем HTML entities (например, &laquo;, &raquo;, &mdash; и др.)
-    // Используем пакет 'he' для декодирования
     const he = require('he');
     let htmlText = he.decode(apiData.text);
-
-    // 5. Очищаем HTML, оставляя только разрешённые теги (<a>, <b>, <i>, <u>, <s>, <code>, <pre>)
-    // и разворачиваем все остальные, сохраняя вложенный текст
-    const cheerio = require('cheerio');
-    // Разрешённые теги Telegram
     const allowedTags = ['a', 'b', 'i', 'u', 's', 'code', 'pre'];
-    // Загружаем HTML в Cheerio
+
     const $ = cheerio.load(`<div>${htmlText}</div>`, { decodeEntities: false });
 
-    /**
-     * Рекурсивно разворачивает все теги, кроме разрешённых, сохраняя вложенный текст и разрешённые теги.
-     * @param {CheerioElement} el
-     * @returns {string}
-     */
     function cleanNode(el) {
-        // Текстовый узел
         if (el.type === 'text') {
             return el.data;
         }
-        // Разрешённый тег
         if (el.type === 'tag' && allowedTags.includes(el.name)) {
             let inner = '';
             if (el.children && el.children.length) {
                 inner = el.children.map(child => cleanNode(child)).join('');
             }
-            // Формируем тег с атрибутами (только href для <a>)
             if (el.name === 'a' && el.attribs && el.attribs.href) {
-                // Безопасно экранируем href
                 let href = el.attribs.href.replace(/"/g, '&quot;');
                 return `<a href="${href}">${inner}</a>`;
             }
             return `<${el.name}>${inner}</${el.name}>`;
         }
-        // Все остальные теги разворачиваем, просто возвращаем содержимое
         if (el.children && el.children.length) {
             return el.children.map(child => cleanNode(child)).join('');
         }
         return '';
     }
 
-    // Получаем содержимое <blockquote> (или всего текста, если блока нет)
     let blockContent = '';
-    // Ищем первый блок <blockquote>
     const block = $('blockquote').first();
     if (block.length) {
         blockContent = block.contents().map((_, el) => cleanNode(el)).get().join('');
     } else {
-        // Если нет <blockquote>, берем весь текст
         blockContent = $('div').contents().map((_, el) => cleanNode(el)).get().join('');
     }
-    // Удаляем лишние подряд идущие переносы строк
     blockContent = blockContent.replace(/\n{3,}/g, '\n\n').trim();
 
-    // 6. Формируем сообщение с заголовком и содержимым (без даты)
-    const message =
+    const text =
         `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
         `<blockquote>${blockContent}</blockquote>`;
 
-    // 7. Рассылаем всем пользователям из базы
+    // Send to all chats in db (no filtering for group/private)
     for (const id of Object.keys(db)) {
         try {
-            await bot.telegram.sendMessage(id, message, {
+            await bot.telegram.sendMessage(id, text, {
                 parse_mode: 'HTML',
                 disable_web_page_preview: true
             });
         } catch (e) {
-            // Игнорируем ошибки отправки отдельным пользователям
+            console.error('Ошибка отправки мысли дня:', id, e.message);
         }
     }
 }
 
-// Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
+// Запуск "мысли дня" по московскому времени 12:34
+const { DateTime } = require('luxon');
+schedule.scheduleJob(
+    { tz: 'Europe/Moscow', hour: 11, minute: 0
+    , second: 0 },
+    sendTheophanMessage
+);
 
 
-// Динамический календарь с кнопками «Вчера»/«Завтра»
-// Новый обработчик календаря: показывает только один день, безопасная обработка ошибок, кнопки для навигации
-bot.hears('Календарь', async (ctx) => {
-    // Московское время (UTC+3)
-    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    await sendDynamicCalendar(ctx, now);
-});
+
+
+
+// (SECOND occurrence deleted)
 
 bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
     try {
@@ -1120,7 +1256,7 @@ bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
 });
 
 async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
-    // Используем московское время по умолчанию
+
     if (!dateObj) {
         dateObj = new Date(Date.now() + 3 * 60 * 60 * 1000);
     }
@@ -1130,7 +1266,7 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     const weekday = WEEKDAYS[dateObj.getDay()];
     const azLink = `https://azbyka.ru/days/${year}-${month}-${day}`;
 
-    // Получаем святых дня через API (безопасно)
+
     let saints = [];
     try {
         const data = await new Promise((resolve) => {
@@ -1178,7 +1314,7 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     }
     text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
 
-    // Кнопки "Вчера"/"Завтра" — только один день за раз
+
     const prevDate = new Date(dateObj);
     prevDate.setDate(dateObj.getDate() - 1);
     const nextDate = new Date(dateObj);
@@ -1187,8 +1323,8 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
     const kb = Markup.inlineKeyboard([
         [
-            Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
-            Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
+            Markup.button.callback('⬅️ Вчера', `calendar_prev_${prevStr}`),
+            Markup.button.callback('Завтра ➡️', `calendar_next_${nextStr}`)
         ],
         [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
         [Markup.button.callback('🏠 В главное меню', 'start_over')]
@@ -1205,20 +1341,38 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     }
 }
 
-// Универсальная безопасная функция массовой рассылки с паузой между отправками (200 мс)
+
 async function safeMassSend(bot, ids, sendFunc, pauseMs = 200) {
     for (const id of ids) {
         try {
             await sendFunc(id);
         } catch (e) {
-            // Можно логировать ошибку отправки пользователю
+
         }
         await new Promise(r => setTimeout(r, pauseMs));
     }
 }
 
 
-
-// --- ПОДКЛЮЧЕНИЕ АДМИН-ПАНЕЛИ ---
-const adminPanel = require('./admin');
-adminPanel(bot);
+async function sendDailyCalendarToGroups() {
+    console.log('📅 Началась рассылка календаря в группы...');
+    await loadDBFromGist(); // обновляем список всех чатов
+    await ensureAllChatsInDB();
+    const ids = Object.keys(db);
+    for (const id of ids) {
+        try {
+            // отправляем только в группы
+            if (!db[id]?.isGroup) continue;
+            const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
+            // Отправляем календарь без кнопок (extra)
+            await sendDynamicCalendar({
+                replyWithHTML: (text) => bot.telegram.sendMessage(id, text, {
+                    parse_mode: 'HTML'
+                })
+            }, date);
+        } catch (e) {
+            console.log('❌ Ошибка отправки в:', id, e);
+        }
+    }
+    console.log('✅ Календарь отправлен всем группам');
+}

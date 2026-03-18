@@ -1,36 +1,187 @@
 {
   "481356531": {
-    "bookmark": null,
+    "bookmark": {
+      "bId": 60,
+      "cId": 1
+    },
     "isSearching": false,
+    "lastSearchQuery": "",
     "first_name": "Վ ☦︎ ורדאן",
     "username": "fohci"
   },
+  "566775206": {
+    "bookmark": {
+      "bId": 48,
+      "cId": 4
+    },
+    "isSearching": false
+  },
+  "706543992": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "737896239": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "808745792": {
+    "bookmark": {
+      "bId": 41,
+      "cId": 8
+    },
+    "isSearching": false,
+    "lastSearchQuery": ""
+  },
+  "827160366": {
+    "bookmark": {
+      "bId": 47,
+      "cId": 4
+    },
+    "isSearching": false
+  },
+  "841272160": {
+    "bookmark": {
+      "bId": 19,
+      "cId": 61
+    },
+    "isSearching": false
+  },
+  "898584629": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "915806229": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "965513644": {
+    "bookmark": {
+      "bId": 43,
+      "cId": 16
+    },
+    "isSearching": false
+  },
+  "1136711252": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "1140954021": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "1202770867": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "1324139712": {
+    "bookmark": {
+      "bId": 19,
+      "cId": 22
+    },
+    "isSearching": false
+  },
+  "1441273447": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "1563419191": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "1678088100": {
+    "bookmark": null,
+    "isSearching": false
+  },
   "8524625728": {
+    "bookmark": {
+      "bId": 48,
+      "cId": 1
+    },
+    "isSearching": false
+  },
+  "6654817715": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "-1001891576530": {
     "bookmark": null,
     "isSearching": false,
-    "first_name": "Вардан",
-    "username": "vartrt"
+    "isGroup": true
   },
-  "__groups": {
-    "-5296099749": {
-      "title": "йоц",
-      "type": "group",
-      "members": {
-        "8524625728": {
-          "name": "Вардан",
-          "username": "vartrt"
-        }
-      }
+  "7007451032": {
+    "bookmark": null,
+    "isSearching": true
+  },
+  "5196208024": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "-1002664171529": {
+    "bookmark": null,
+    "isSearching": false,
+    "isGroup": true
+  },
+  "5395325473": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "6397088466": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "6242886368": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "5813397891": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "5724454620": {
+    "bookmark": {
+      "bId": 42,
+      "cId": 12
     },
-    "-1003828533503": {
-      "title": "qw",
-      "type": "supergroup",
-      "members": {
-        "8524625728": {
-          "name": "Вардан",
-          "username": "vartrt"
-        }
-      }
-    }
+    "isSearching": false
+  },
+  "7178675965": {
+    "bookmark": {
+      "bId": 40,
+      "cId": 4
+    },
+    "isSearching": false,
+    "lastSearchQuery": ""
+  },
+  "6063762167": {
+    "bookmark": {
+      "bId": 2,
+      "cId": 21
+    },
+    "isSearching": false
+  },
+  "6446732809": {
+    "bookmark": null,
+    "isSearching": true
+  },
+  "6958774670": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "8431084453": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "6227614319": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "5108555141": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "-1003846069273": {
+    "bookmark": null,
+    "isSearching": false,
+    "isGroup": true
   }
 }
