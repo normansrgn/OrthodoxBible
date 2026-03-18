@@ -97,11 +97,14 @@
       "bId": 48,
       "cId": 1
     },
-    "isSearching": false
+    "isSearching": false,
+    "first_name": "Вардан",
+    "username": "vartrt"
   },
   "6654817715": {
     "bookmark": null,
-    "isSearching": false
+    "isSearching": false,
+    "first_name": "ø"
   },
   "-1001891576530": {
     "bookmark": null,
@@ -183,5 +186,31 @@
     "bookmark": null,
     "isSearching": false,
     "isGroup": true
+  },
+  "5277605109": {
+    "bookmark": null,
+    "isSearching": false
+  },
+  "__groups": {
+    "-5237100065": {
+      "title": "2",
+      "type": "group",
+      "members": {
+        "6654817715": {
+          "name": "ø",
+          "username": null
+        }
+      }
+    },
+    "-1003828533503": {
+      "title": "qw",
+      "type": "supergroup",
+      "members": {
+        "8524625728": {
+          "name": "Вардан",
+          "username": "vartrt"
+        }
+      }
+    }
   }
 }
