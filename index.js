@@ -47,7 +47,6 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 const token = process.env.BOT_TOKEN;
 
 
@@ -218,6 +217,12 @@ bot.use(async (ctx, next) => {
     } catch (e) {
         // игнорируем ошибки логирования групп
     }
+    // В группах/каналах не показываем "нижние кнопки" (reply keyboard) и вообще не обрабатываем команды/меню.
+    // Разрешаем только сервисные апдейты (например, добавление/удаление бота), чтобы учёт групп работал.
+    const isServiceUpdate = ctx.updateType === 'my_chat_member' || ctx.updateType === 'chat_member';
+    const isPrivateChat = ctx.chat?.type === 'private';
+    if (!isPrivateChat && !isServiceUpdate) return;
+
     return next();
 });
 
@@ -1116,6 +1121,12 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 
+// ⏰ Каждый день в 10:00 по Москве
+schedule.scheduleJob(
+    { tz: 'Europe/Moscow', hour: 14, minute: 0 },
+    sendDailyCalendarToGroups
+);
+
 // --- SCHEDULED TASKS ---
 async function runScheduledTasksNow() {
     console.log('▶️ Запуск всех отложенных задач сразу после старта бота для проверки…');
@@ -1390,3 +1401,40 @@ async function safeMassSend(bot, ids, sendFunc, pauseMs = 200) {
 // --- ПОДКЛЮЧЕНИЕ АДМИН-ПАНЕЛИ ---
 const adminPanel = require('./admin');
 adminPanel(bot);
+
+
+async function sendDailyCalendarToGroups() {
+    console.log('📅 Началась рассылка календаря в группы...');
+    // обновляем список всех чатов из Gist (если доступно), без падения джобы
+    if (gistOk) {
+        try {
+            const remote = await loadDbFromGist();
+            if (remote && typeof remote === 'object') {
+                db = remote;
+                saveDB(); // обновим локальный кэш
+                logDBLoadedForce('gist_refresh');
+            }
+        } catch (e) {
+            console.warn('⚠️ Не удалось обновить БД из Gist перед рассылкой:', e?.message || e);
+        }
+    } else {
+        // на случай если Gist недоступен — убеждаемся, что локальная БД загружена
+        loadDB();
+    }
+    const groups = db.__groups && typeof db.__groups === 'object' ? db.__groups : {};
+    const ids = Object.keys(groups);
+    for (const id of ids) {
+        try {
+            const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
+            // Отправляем календарь без кнопок (extra)
+            await sendDynamicCalendar({
+                replyWithHTML: (text) => bot.telegram.sendMessage(id, text, {
+                    parse_mode: 'HTML'
+                })
+            }, date);
+        } catch (e) {
+            console.log('❌ Ошибка отправки в:', id, e);
+        }
+    }
+    console.log('✅ Календарь отправлен всем группам');
+}
