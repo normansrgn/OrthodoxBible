@@ -1195,83 +1195,92 @@ async function sendTheophanMessage() {
         return;
     }
 
-    // 4. Декодируем HTML entities (например, &laquo;, &raquo;, &mdash; и др.)
-    // Используем пакет 'he' для декодирования
+    // 4. Декодируем HTML entities
     const he = require('he');
     let htmlText = he.decode(apiData.text);
 
-    // 5. Очищаем HTML, оставляя только разрешённые теги (<a>, <b>, <i>, <u>, <s>, <code>, <pre>)
-    // и разворачиваем все остальные, сохраняя вложенный текст
+    // 5. Очищаем HTML
     const cheerio = require('cheerio');
-    // Разрешённые теги Telegram
     const allowedTags = ['a', 'b', 'i', 'u', 's', 'code', 'pre'];
-    // Загружаем HTML в Cheerio
     const $ = cheerio.load(`<div>${htmlText}</div>`, { decodeEntities: false });
 
-    /**
-     * Рекурсивно разворачивает все теги, кроме разрешённых, сохраняя вложенный текст и разрешённые теги.
-     * @param {CheerioElement} el
-     * @returns {string}
-     */
     function cleanNode(el) {
-        // Текстовый узел
         if (el.type === 'text') {
             return el.data;
         }
-        // Разрешённый тег
         if (el.type === 'tag' && allowedTags.includes(el.name)) {
             let inner = '';
             if (el.children && el.children.length) {
                 inner = el.children.map(child => cleanNode(child)).join('');
             }
-            // Формируем тег с атрибутами (только href для <a>)
             if (el.name === 'a' && el.attribs && el.attribs.href) {
-                // Безопасно экранируем href
                 let href = el.attribs.href.replace(/"/g, '&quot;');
                 return `<a href="${href}">${inner}</a>`;
             }
             return `<${el.name}>${inner}</${el.name}>`;
         }
-        // Все остальные теги разворачиваем, просто возвращаем содержимое
         if (el.children && el.children.length) {
             return el.children.map(child => cleanNode(child)).join('');
         }
         return '';
     }
 
-    // Получаем содержимое <blockquote> (или всего текста, если блока нет)
     let blockContent = '';
-    // Ищем первый блок <blockquote>
     const block = $('blockquote').first();
     if (block.length) {
         blockContent = block.contents().map((_, el) => cleanNode(el)).get().join('');
     } else {
-        // Если нет <blockquote>, берем весь текст
         blockContent = $('div').contents().map((_, el) => cleanNode(el)).get().join('');
     }
-    // Удаляем лишние подряд идущие переносы строк
     blockContent = blockContent.replace(/\n{3,}/g, '\n\n').trim();
 
-    // 6. Формируем сообщение с заголовком и содержимым (без даты)
     const message =
-        `<b>Мысль дня от свтятого Феофана Затворника</b>\n\n` +
+        `<b>Мысль дня от святителя Феофана Затворника</b>\n\n` +
         `<blockquote>${blockContent}</blockquote>`;
 
-    // 7. Рассылаем всем пользователям из базы
-    for (const id of Object.keys(db)) {
+    // 6. Рассылаем ВСЕМ пользователям И группам из базы
+    const allIds = [];
+    
+    // Добавляем пользователей (числовые id)
+    for (const key of Object.keys(db)) {
+        if (key !== '__groups' && !isNaN(Number(key))) {
+            allIds.push(Number(key));
+        }
+    }
+    
+    // Добавляем группы (chat id могут быть отрицательными)
+    if (db.__groups && typeof db.__groups === 'object') {
+        for (const groupId of Object.keys(db.__groups)) {
+            const numId = Number(groupId);
+            if (!isNaN(numId)) {
+                allIds.push(numId);
+            }
+        }
+    }
+    
+    // Убираем дубликаты
+    const uniqueIds = [...new Set(allIds)];
+    
+    console.log(`📤 Отправка мысли дня ${uniqueIds.length} получателям...`);
+    
+    // Отправляем с паузой
+    for (const id of uniqueIds) {
         try {
             await bot.telegram.sendMessage(id, message, {
                 parse_mode: 'HTML',
                 disable_web_page_preview: true
             });
+            await new Promise(r => setTimeout(r, 200)); // пауза 200мс
         } catch (e) {
-            // Игнорируем ошибки отправки отдельным пользователям
+            // Игнорируем ошибки отправки (бот заблокирован, чат удален и т.д.)
         }
     }
+    
+    console.log('✅ Мысль дня отправлена всем получателям');
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('00 11 * * *', sendTheophanMessage);
+schedule.scheduleJob('20 12 * * *', sendTheophanMessage);
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
@@ -1292,7 +1301,7 @@ bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
     }
 });
 
-async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
+async function sendDynamicCalendar(ctx, dateObj, isEdit = false, showButtons = true) {
     // Используем московское время по умолчанию (Europe/Moscow)
     if (!dateObj) {
         dateObj = new Date();
@@ -1355,32 +1364,51 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false) {
     }
     text += `📖 <a href="${azLink}">Жития, иконы и чтения дня</a>`;
 
-    // Кнопки "Вчера"/"Завтра" — только один день за раз
-    const prevDate = new Date(moscowNoon);
-    prevDate.setDate(prevDate.getDate() - 1);
-    const nextDate = new Date(moscowNoon);
-    nextDate.setDate(nextDate.getDate() + 1);
-    const prevP = getMoscowParts(prevDate);
-    const nextP = getMoscowParts(nextDate);
-    const prevStr = `${prevP.year}-${String(prevP.month).padStart(2, '0')}-${String(prevP.day).padStart(2, '0')}`;
-    const nextStr = `${nextP.year}-${String(nextP.month).padStart(2, '0')}-${String(nextP.day).padStart(2, '0')}`;
-    const kb = Markup.inlineKeyboard([
-        [
-            Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
-            Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
-        ],
-        [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
-        [Markup.button.callback('🏠 В главное меню', 'start_over')]
-    ]);
+    // ВАЖНО: кнопки создаем ТОЛЬКО если showButtons === true
+    let kb = null;
+    if (showButtons === true) {
+        const prevDate = new Date(moscowNoon);
+        prevDate.setDate(prevDate.getDate() - 1);
+        const nextDate = new Date(moscowNoon);
+        nextDate.setDate(nextDate.getDate() + 1);
+        const prevP = getMoscowParts(prevDate);
+        const nextP = getMoscowParts(nextDate);
+        const prevStr = `${prevP.year}-${String(prevP.month).padStart(2, '0')}-${String(prevP.day).padStart(2, '0')}`;
+        const nextStr = `${nextP.year}-${String(nextP.month).padStart(2, '0')}-${String(nextP.day).padStart(2, '0')}`;
+        kb = Markup.inlineKeyboard([
+            [
+                Markup.button.callback('⬅️ Вчера', `calendar_prev_${year}-${month}-${day}`),
+                Markup.button.callback('Завтра ➡️', `calendar_next_${year}-${month}-${day}`)
+            ],
+            [Markup.button.url('☦️ Открыть Азбуку Веры', azLink)],
+            [Markup.button.callback('🏠 В главное меню', 'start_over')]
+        ]);
+    }
 
     try {
         if (isEdit && ctx.editMessageText) {
-            await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+            // Если редактируем сообщение
+            if (kb) {
+                await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+            } else {
+                await ctx.editMessageText(text, { parse_mode: 'HTML' });
+            }
         } else {
-            await ctx.replyWithHTML(text, kb);
+            // Если отправляем новое сообщение
+            if (kb) {
+                await ctx.replyWithHTML(text, kb);
+            } else {
+                await ctx.replyWithHTML(text);
+            }
         }
     } catch (e) {
-        try { await ctx.reply('Произошла ошибка при отправке календаря.'); } catch {}
+        try { 
+            if (!kb) {
+                await ctx.replyWithHTML(text);
+            } else {
+                await ctx.reply('Произошла ошибка при отправке календаря.');
+            }
+        } catch {}
     }
 }
 
@@ -1425,15 +1453,25 @@ async function sendDailyCalendarToGroups() {
     const ids = Object.keys(groups);
     for (const id of ids) {
         try {
-            const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
-            // Отправляем календарь без кнопок (extra)
-            await sendDynamicCalendar({
-                replyWithHTML: (text) => bot.telegram.sendMessage(id, text, {
-                    parse_mode: 'HTML'
-                })
-            }, date);
+            const date = new Date();
+            // Создаем объект-эмулятор контекста с нужными методами
+            const mockCtx = {
+                chat: { id: id },
+                replyWithHTML: async (text, extra) => {
+                    await bot.telegram.sendMessage(id, text, {
+                        parse_mode: 'HTML',
+                        ...extra
+                    });
+                },
+                editMessageText: null, // для групп не нужно
+                reply: async (text) => {
+                    await bot.telegram.sendMessage(id, text);
+                }
+            };
+            // ВАЖНО: передаем false как 4-й параметр (showButtons)
+            await sendDynamicCalendar(mockCtx, date, false, false);
         } catch (e) {
-            console.log('❌ Ошибка отправки в:', id, e);
+            console.log('❌ Ошибка отправки в группу:', id, e?.message || e);
         }
     }
     console.log('✅ Календарь отправлен всем группам');
