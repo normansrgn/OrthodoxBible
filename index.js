@@ -1280,7 +1280,7 @@ async function sendTheophanMessage() {
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('20 12 * * *', sendTheophanMessage);
+schedule.scheduleJob('40 12 * * *', sendTheophanMessage);
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
