@@ -48,7 +48,7 @@ if (fs.existsSync(fontPath)) {
 }
 
 const token = process.env.BOT_TOKEN;
-
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -1280,7 +1280,7 @@ async function sendTheophanMessage() {
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('40 12 * * *', sendTheophanMessage);
+schedule.scheduleJob('45 12 * * *', sendTheophanMessage);
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
