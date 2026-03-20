@@ -6,6 +6,8 @@ const fs = require('fs');
 const { createCanvas, registerFont } = require('canvas');
 const path = require('path');
 const https = require('https');
+const express = require('express');
+
 
 function getMoscowParts(date = new Date()) {
     // Используем реальный часовой пояс, без ручного "+3 часа"
@@ -281,7 +283,7 @@ bot.on('my_chat_member', async (ctx) => {
                     `🕊 Для полноценного использования откройте меня в личных сообщениях.\n\n` +
                     `Да благословит вас Господь!`;
 
-                await ctx.replyWithHTML(text).catch(() => {});
+                await ctx.replyWithHTML(text).catch(() => { });
             }
         } catch (e) {
             console.error('❌ Ошибка приветствия в группе:', e?.message || e);
@@ -1109,6 +1111,34 @@ bot.action(/pic_(\d+)_(\d+)_(\d+)/, async (ctx) => {
     ctx.replyWithPhoto({ source: buf }, { caption: `☦️ <b>${getBookName(bId)} ${cId}:${vId}</b>`, parse_mode: 'HTML' });
 });
 
+// --- ВЕБ-СЕРВЕР ДЛЯ RAILWAY ---
+function startWebServer() {
+    const app = express();
+    const port = process.env.PORT || 3000;
+
+    // Простой эндпоинт для проверки работоспособности
+    app.get('/', (req, res) => {
+        res.send('✅ Бот работает!');
+    });
+
+    // Эндпоинт для проверки статуса
+    app.get('/health', (req, res) => {
+        res.json({
+            status: 'ok',
+            time: new Date().toISOString(),
+            groups: db.__groups ? Object.keys(db.__groups).length : 0,
+            users: Object.keys(db).filter(k => k !== '__groups').length
+        });
+    });
+
+    app.listen(port, () => {
+        console.log(`🌐 Веб-сервер запущен на порту ${port}`);
+    });
+}
+
+// Запускаем веб-сервер (нужно для Railway)
+startWebServer();
+
 bot.telegram.deleteWebhook().then(() => {
     bot.launch().then(async () => {
         console.log('☦️ Бот запущен');
@@ -1122,10 +1152,8 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 
 // ⏰ Каждый день в 10:00 по Москве
-schedule.scheduleJob(
-    { tz: 'Europe/Moscow', hour: 14, minute: 0 },
-    sendDailyCalendarToGroups
-);
+schedule.scheduleJob({ tz: 'Europe/Moscow', hour: 14, minute: 0 }, sendDailyCalendarToGroups);
+console.log('✅ Расписание календаря установлено на 14:00 MSK');
 
 // --- SCHEDULED TASKS ---
 async function runScheduledTasksNow() {
@@ -1161,6 +1189,9 @@ async function runScheduledTasksNow() {
  * и отправляет всем пользователям.
  */
 async function sendTheophanMessage() {
+    console.log('🕊️ ЗАПУСК sendTheophanMessage в:', new Date().toISOString());
+    console.log('📊 Текущая БД: пользователей =', Object.keys(db).filter(k => k !== '__groups').length);
+    console.log('📊 Текущая БД: групп =', db.__groups ? Object.keys(db.__groups).length : 0);
     // 1. Формируем дату и URL API
     const now = new Date();
     const year = now.getFullYear();
@@ -1240,14 +1271,14 @@ async function sendTheophanMessage() {
 
     // 6. Рассылаем ВСЕМ пользователям И группам из базы
     const allIds = [];
-    
+
     // Добавляем пользователей (числовые id)
     for (const key of Object.keys(db)) {
         if (key !== '__groups' && !isNaN(Number(key))) {
             allIds.push(Number(key));
         }
     }
-    
+
     // Добавляем группы (chat id могут быть отрицательными)
     if (db.__groups && typeof db.__groups === 'object') {
         for (const groupId of Object.keys(db.__groups)) {
@@ -1257,12 +1288,12 @@ async function sendTheophanMessage() {
             }
         }
     }
-    
+
     // Убираем дубликаты
     const uniqueIds = [...new Set(allIds)];
-    
+
     console.log(`📤 Отправка мысли дня ${uniqueIds.length} получателям...`);
-    
+
     // Отправляем с паузой
     for (const id of uniqueIds) {
         try {
@@ -1275,12 +1306,14 @@ async function sendTheophanMessage() {
             // Игнорируем ошибки отправки (бот заблокирован, чат удален и т.д.)
         }
     }
-    
+
     console.log('✅ Мысль дня отправлена всем получателям');
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob('48 12 * * *', sendTheophanMessage);
+schedule.scheduleJob({ tz: 'Europe/Moscow', hour: 12, minute: 58 }, sendTheophanMessage);
+console.log('✅ Расписание мысли дня установлено на 12:48 MSK');
+
 
 
 // Динамический календарь с кнопками «Вчера»/«Завтра»
@@ -1297,7 +1330,7 @@ bot.action(/calendar_(prev|next)_(\d{4}-\d{2}-\d{2})/, async (ctx) => {
         else date.setDate(date.getDate() + 1);
         await sendDynamicCalendar(ctx, date, true);
     } catch (e) {
-        try { await ctx.reply('Произошла ошибка при загрузке календаря. Попробуйте позже.'); } catch {}
+        try { await ctx.reply('Произошла ошибка при загрузке календаря. Попробуйте позже.'); } catch { }
     }
 });
 
@@ -1402,13 +1435,13 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false, showButtons = t
             }
         }
     } catch (e) {
-        try { 
+        try {
             if (!kb) {
                 await ctx.replyWithHTML(text);
             } else {
                 await ctx.reply('Произошла ошибка при отправке календаря.');
             }
-        } catch {}
+        } catch { }
     }
 }
 
@@ -1476,3 +1509,30 @@ async function sendDailyCalendarToGroups() {
     }
     console.log('✅ Календарь отправлен всем группам');
 }
+
+// --- ТЕСТОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ РАССЫЛКИ ---
+bot.command('test_send', async (ctx) => {
+    // Проверяем, что это админ (замените на свой ID)
+    const adminIds = [123456789]; // Укажите свой Telegram ID
+    if (!adminIds.includes(ctx.from.id)) {
+        return ctx.reply('⛔ У вас нет прав для этой команды');
+    }
+
+    await ctx.reply('🔄 Начинаю тестовую отправку...');
+
+    try {
+        await sendTheophanMessage();
+        await ctx.reply('✅ Мысль дня отправлена');
+    } catch (e) {
+        await ctx.reply(`❌ Ошибка: ${e.message}`);
+        console.error(e);
+    }
+
+    try {
+        await sendDailyCalendarToGroups();
+        await ctx.reply('✅ Календарь отправлен в группы');
+    } catch (e) {
+        await ctx.reply(`❌ Ошибка: ${e.message}`);
+        console.error(e);
+    }
+});

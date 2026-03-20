@@ -315,6 +315,10 @@
       "title": "♰ ավետարանիչ ♰ Chat",
       "type": "supergroup",
       "members": {
+        "481356531": {
+          "name": "Վ ☦︎ ורדאן",
+          "username": "fohci"
+        },
         "824095458": {
           "name": "David",
           "username": "lonelybunnyz"
@@ -331,7 +335,8 @@
           "name": "Alex",
           "username": null
         }
-      }
+      },
+      "welcomeSentAt": 1774000008138
     },
     "-1003846069273": {
       "title": "мишкин чат",
