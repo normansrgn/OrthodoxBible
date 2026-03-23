@@ -1311,7 +1311,7 @@ async function sendTheophanMessage() {
 }
 
 // Каждый день в 11:00 по серверному времени
-schedule.scheduleJob({ tz: 'Europe/Moscow', hour: 11, minute: 36 }, sendTheophanMessage);
+schedule.scheduleJob({ tz: 'Europe/Moscow', hour: 10, minute: 12 }, sendTheophanMessage);
 console.log('✅ Расписание мысли дня установлено на 12:48 MSK');
 
 

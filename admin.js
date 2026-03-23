@@ -47,11 +47,16 @@ async function loadDB() {
 
 function getUsers() {
     return Object.entries(db)
-        .filter(([id]) => {
+        .filter(([id, user]) => {
             if (id === '__groups') return false;
-            // user_id у Telegram всегда положительный, отрицательные — это чаты/группы (старые записи)
             if (String(id).startsWith('-')) return false;
-            return true;
+
+            const hasName =
+                user.name ||
+                user.first_name ||
+                user.last_name;
+
+            return !!hasName; // оставляем только тех, у кого есть имя
         });
 }
 
