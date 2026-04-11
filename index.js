@@ -10,7 +10,7 @@ const express = require('express');
 
 
 function getMoscowParts(date = new Date()) {
-    // Используем реальный часовой пояс, без ручного "+3 часа"
+
     const dtf = new Intl.DateTimeFormat('ru-RU', {
         timeZone: 'Europe/Moscow',
         year: 'numeric',
@@ -31,11 +31,11 @@ function getMoscowParts(date = new Date()) {
 function toMoscowNoonDate(year, month, day) {
     const mm = String(month).padStart(2, '0');
     const dd = String(day).padStart(2, '0');
-    // Полдень по Москве, чтобы исключить пограничные эффекты около полуночи
+
     return new Date(`${year}-${mm}-${dd}T12:00:00+03:00`);
 }
 
-// --- НАСТРОЙКА ШРИФТА ---
+
 const fontPath = path.resolve(__dirname, 'fonts', 'Izhitsa.ttf');
 
 if (fs.existsSync(fontPath)) {
@@ -49,8 +49,8 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-const token = process.env.BOT_TOKEN;
-// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+// const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -62,7 +62,7 @@ bot.use(session());
 const DATA_FILE = './users_data.json';
 const { checkGistAccess, loadDbFromGist, saveDbToGist } = require('./gistDb');
 
-// --- БАЗА ДАННЫХ ---
+
 let db = {};
 let gistOk = false;
 let gistSaveTimer = null;
@@ -81,7 +81,7 @@ const loadDB = () => {
 const saveDB = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
 
 function logDBLoaded(reason) {
-    // анти-спам: не чаще 1 раза в 60 секунд
+
     const now = Date.now();
     if (now - lastDBLoadLogAt < 60_000) return;
     lastDBLoadLogAt = now;
@@ -95,7 +95,7 @@ function logDBLoaded(reason) {
 }
 
 function logDBLoadedForce(reason) {
-    // без анти-спама, чтобы было видно итог после загрузки с Gist
+
     const userCount = Object.keys(db).filter((k) => k !== '__groups').length;
     const groupCount =
         db.__groups && typeof db.__groups === 'object'
@@ -119,7 +119,7 @@ function scheduleGistSave(reason = 'update') {
             console.log(`☁️ Gist saved (${reason})`);
         } catch (e) {
             console.error('❌ Ошибка сохранения в Gist:', e?.message || e);
-            gistOk = false; // чтобы не спамить ошибками
+            gistOk = false; 
         } finally {
             gistSaveInFlight = false;
             if (gistSaveQueued) {
@@ -137,7 +137,7 @@ const ensureUserProfile = (from) => {
         db[id] = { bookmark: null, isSearching: false };
     }
     const user = db[id];
-    // сохраняем базовую информацию о пользователе для админки
+
     if (from.first_name) user.first_name = from.first_name;
     if (from.last_name) user.last_name = from.last_name;
     if (from.username) user.username = from.username;
@@ -148,20 +148,20 @@ const initUser = (id) => {
 };
 
 async function initDbFromGistOrLocal() {
-    // Всегда пытаемся взять БД из Gist (источник правды)
+
     try {
         gistOk = await checkGistAccess();
         if (gistOk) {
             const remote = await loadDbFromGist();
             if (remote && typeof remote === 'object') {
                 db = remote;
-                saveDB(); // локальный кэш на крайний случай
+                saveDB(); 
                 console.log('☁️ Gist loaded: local cache updated');
                 logDBLoadedForce('gist');
                 return;
             }
         }
-        // Если Gist недоступен/пуст — fallback на локальный файл
+
         console.warn('⚠️ Gist недоступен, fallback на локальный users_data.json');
         gistOk = false;
         loadDB();
@@ -174,10 +174,8 @@ async function initDbFromGistOrLocal() {
     }
 }
 
-// Запускаем инициализацию БД сразу (и дальше будем await-ить перед обработкой апдейтов)
 dbInitPromise = initDbFromGistOrLocal();
 
-// --- ОТСЛЕЖИВАНИЕ ГРУПП И ПОЛЬЗОВАТЕЛЕЙ ---
 bot.use(async (ctx, next) => {
     try {
         if (dbInitPromise) {
@@ -200,7 +198,7 @@ bot.use(async (ctx, next) => {
                     members: {}
                 };
             } else {
-                // обновляем название, если оно изменилось
+
                 if (ctx.chat.title) {
                     db.__groups[chatId].title = ctx.chat.title;
                 }
@@ -217,10 +215,9 @@ bot.use(async (ctx, next) => {
         saveDB();
         scheduleGistSave('ctx_update');
     } catch (e) {
-        // игнорируем ошибки логирования групп
+
     }
-    // В группах/каналах не показываем "нижние кнопки" (reply keyboard) и вообще не обрабатываем команды/меню.
-    // Разрешаем только сервисные апдейты (например, добавление/удаление бота), чтобы учёт групп работал.
+
     const isServiceUpdate = ctx.updateType === 'my_chat_member' || ctx.updateType === 'chat_member';
     const isPrivateChat = ctx.chat?.type === 'private';
     if (!isPrivateChat && !isServiceUpdate) return;
@@ -228,7 +225,7 @@ bot.use(async (ctx, next) => {
     return next();
 });
 
-// --- ЛОГ: ДОБАВЛЕНИЕ БОТА В ГРУППУ ---
+
 bot.on('my_chat_member', async (ctx) => {
     try {
         const upd = ctx.myChatMember;
@@ -240,7 +237,7 @@ bot.on('my_chat_member', async (ctx) => {
         const newStatus = upd.new_chat_member?.status;
         const isMemberFlag = upd.new_chat_member?.is_member;
 
-        // Telegram иногда добавляет бота как restricted (с is_member=true).
+
         const isNowInChat =
             ['member', 'administrator'].includes(newStatus) ||
             (newStatus === 'restricted' && isMemberFlag === true);
@@ -253,7 +250,7 @@ bot.on('my_chat_member', async (ctx) => {
 
         if (!becameMember) return;
 
-        // Обновляем локальную БД групп и ставим флаг приветствия (чтобы не дублировать)
+
         try {
             loadDB();
             if (!db.__groups || typeof db.__groups !== 'object') db.__groups = {};
@@ -299,11 +296,11 @@ bot.on('my_chat_member', async (ctx) => {
             ctx.from?.username ? `(@${ctx.from.username})` : ''
         );
     } catch (e) {
-        // ignore
+
     }
 });
 
-// --- ДАННЫЕ БИБЛИИ ---
+
 let bibleData = [];
 try {
     bibleData = JSON.parse(fs.readFileSync('./bible.json', 'utf8')).Books;
@@ -325,13 +322,9 @@ const PSALMS_CATEGORIES = [
     { name: 'О мире душевном', psalms: [22, 26, 36, 61] }
 ];
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-// Функция для генерации ссылок на толкования (Ekzeget.ru)
 function getInterpretationLink(bId, cId) {
     const name = getBookName(Number(bId)).trim();
 
-    // Ветхий Завет на сайте Лопухина имеет номера 01–39
     let bookNum = null;
 
     if (Number(bId) <= 39) {
@@ -376,8 +369,7 @@ function getInterpretationLink(bId, cId) {
         return "https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/";
     }
 
-    // Обработка: Псалтирь на сайте имеет другую структуру ссылок, 
-    // но для большинства книг работает формат ниже:
+
     if (bId === 19) {
         return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_19/${cId}`;
     }
@@ -385,7 +377,6 @@ function getInterpretationLink(bId, cId) {
     return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_${bookNum}/${cId}`;
 }
 
-// --- КАЛЕНДАРЬ ---
 function getOrthodoxPascha(year) {
     const a = year % 19, b = year % 4, c = year % 7;
     const d = (19 * a + 15) % 30;
@@ -394,7 +385,6 @@ function getOrthodoxPascha(year) {
     return f <= 9 ? new Date(year, 3, 22 + f + 13) : new Date(year, 4, f - 9 + 13);
 }
 
-// Локальный массив с примерами памятей святых (можно расширить)
 const ORTHODOX_CALENDAR = [
     // Пример: 7 января, Рождество Христово
     { month: 1, day: 7, saints: ['Рождество Господа Бога и Спаса нашего Иисуса Христа'] },
@@ -405,36 +395,35 @@ const ORTHODOX_CALENDAR = [
     { month: 9, day: 21, saints: ['Рождество Пресвятой Богородицы'] },
     { month: 9, day: 27, saints: ['Воздвижение Честного и Животворящего Креста Господня'] },
     { month: 12, day: 4, saints: ['Введение во храм Пресвятой Богородицы'] },
-    // ... можно добавить больше памятей
+
 ];
 
-// Вычисление даты Пасхи (православная Пасха, алгоритм для Юлианского календаря, сдвиг на 13 дней для Григорианского)
+
 function getOrthodoxPaschaDate(year) {
-    // Алгоритм Остроградского (Meeus/Jones/Butcher)
+
     const a = year % 19;
     const b = year % 4;
     const c = year % 7;
     const d = (19 * a + 15) % 30;
     const e = (2 * b + 4 * c + 6 * d + 6) % 7;
-    const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e)); // март (2) + дни
-    // Переводим в григорианский календарь (добавляем 13 дней для XXI века)
+    const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e)); 
+
     julianPascha.setUTCDate(julianPascha.getUTCDate() + 13);
     return new Date(julianPascha.getUTCFullYear(), julianPascha.getUTCMonth(), julianPascha.getUTCDate());
 }
 
-// Определение дня недели
+
 const WEEKDAYS = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
 
-// Определение седмицы, постов, трапезы и периода
+
 function getFastingInfo(date, paschaDate) {
-    // Великий пост: за 48 дней до Пасхи (Чистый понедельник), 7 недель
+
     const greatLentStart = new Date(paschaDate);
     greatLentStart.setDate(greatLentStart.getDate() - 48);
     const greatLentEnd = new Date(paschaDate);
     greatLentEnd.setDate(greatLentEnd.getDate() - 2); // до Великой субботы
 
-    // Строгий пост: среда и пятница (кроме сплошных седмиц и праздничных дней)
-    // Петров пост: от понедельника через неделю после Троицы до 12 июля (Петра и Павла)
+
     const pentecost = new Date(paschaDate);
     pentecost.setDate(paschaDate.getDate() + 49);
     const petrovPostStart = new Date(pentecost);
@@ -637,13 +626,11 @@ async function getDetailedCalendar() {
         });
         if (data && data.presentations) {
             // Парсим только список святых, удаляя запрещённые теги Telegram
-            // Оставляем только <a>, <b>, <i>, <u>, <s>, <code>, <pre>, <span>
-            // (но используем только <a> для святых)
             const $ = cheerio.load(data.presentations, { decodeEntities: false });
             const arr = [];
             // Удаляем фото, таблицы, картинки и запрещённые теги
             $('img, table, tbody, tr, td, th, style, script, iframe, object, embed, form, input, button, video, audio, figure, figcaption').remove();
-            // Собираем только <a> с именами святых
+
             $('a').each((i, el) => {
                 // Проверяем, что ссылка не пуста и текст не пустой
                 const name = $(el).text().trim();
@@ -729,7 +716,7 @@ async function createVerseCard(text, ref) {
 
 // --- КЛАВИАТУРЫ ---
 const mainReplyMenu = Markup.keyboard([
-    ['📖 Библия', '📜 Закон Божий'], // Добавили кнопку в первый ряд
+    ['📖 Библия', '📜 Закон Божий'], 
     ['Молитвослов', 'Календарь'],
     ['Поиск']
 ]).resize();
@@ -875,7 +862,7 @@ bot.hears('Случайный стих', async (ctx) => {
 
     if (!bibleData.length) return;
 
-    // --- ПРИОРИТЕТ КАК В YOUVERSION ---
+
     const gospels = bibleData.filter(b => b.BookId >= 40 && b.BookId <= 43);
     const psalms = bibleData.filter(b => b.BookId === 19);
     const proverbs = bibleData.filter(b => b.BookId === 20);
@@ -905,7 +892,7 @@ bot.hears('Случайный стих', async (ctx) => {
 
     let startIndex = Math.floor(Math.random() * chapter.Verses.length);
 
-    // защита от обрыва мысли
+
     if (startIndex > 0) {
         const prev = chapter.Verses[startIndex].Text.trim()[0];
         if (prev === prev.toLowerCase()) startIndex--;
@@ -1064,7 +1051,7 @@ bot.action('do_bible_search', async (ctx) => {
     await ctx.replyWithHTML(responseText, Markup.inlineKeyboard(buttons));
 });
 
-// --- CALLBACK ACTIONS ---
+
 bot.action(/ps_cat_(\d+)/, (ctx) => {
     const cat = PSALMS_CATEGORIES[+ctx.match[1]];
     const buttons = cat.psalms.map(p => Markup.button.callback(`Псалом ${p}`, `read_new_19_${p}`));
