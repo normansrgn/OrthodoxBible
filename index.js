@@ -49,8 +49,8 @@ if (fs.existsSync(fontPath)) {
     console.error('❌ ФАЙЛ ШРИФТА НЕ НАЙДЕН!');
 }
 
-// const token = process.env.BOT_TOKEN;
-const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
+const token = process.env.BOT_TOKEN;
+// const token = process.env.BOT_TOKEN || '7989837189:AAGSlt1TUg4grwfuzOKavKWSjr1mKwYCxnA';
 
 if (!token) {
     console.error('❌ Переменная окружения BOT_TOKEN не установлена. Укажите токен бота в BOT_TOKEN.');
@@ -417,38 +417,46 @@ const WEEKDAYS = ['Воскресенье', 'Понедельник', 'Втор�
 
 
 function getFastingInfo(date, paschaDate) {
+    // Нормализуем даты до начала суток, чтобы не было ошибок из-за времени (глас/седмица)
+const normalize = (d) => {
+    const p = getMoscowParts(d);
+    return toMoscowNoonDate(p.year, p.month, p.day);
+};
 
-    const greatLentStart = new Date(paschaDate);
+    const dateN = normalize(date);
+    const paschaN = normalize(paschaDate);
+
+    const greatLentStart = new Date(paschaN);
     greatLentStart.setDate(greatLentStart.getDate() - 48);
-    const greatLentEnd = new Date(paschaDate);
+    const greatLentEnd = new Date(paschaN);
     greatLentEnd.setDate(greatLentEnd.getDate() - 2); // до Великой субботы
 
 
-    const pentecost = new Date(paschaDate);
-    pentecost.setDate(paschaDate.getDate() + 49);
+    const pentecost = new Date(paschaN);
+    pentecost.setDate(paschaN.getDate() + 49);
     const petrovPostStart = new Date(pentecost);
     petrovPostStart.setDate(pentecost.getDate() + 1);
-    const petrovPostEnd = new Date(date.getFullYear(), 6, 12); // 12 июля
+    const petrovPostEnd = new Date(dateN.getFullYear(), 6, 12); // 12 июля
 
     // Успенский пост: 14–27 августа
-    const uspenskyPostStart = new Date(date.getFullYear(), 7, 14);
-    const uspenskyPostEnd = new Date(date.getFullYear(), 7, 27);
+    const uspenskyPostStart = new Date(dateN.getFullYear(), 7, 14);
+    const uspenskyPostEnd = new Date(dateN.getFullYear(), 7, 27);
 
     // Рождественский пост: 28 ноября – 6 января
-    const christmasFastStart = new Date(date.getFullYear(), 10, 28);
-    const christmasFastEnd = new Date(date.getFullYear() + 1, 0, 6);
+    const christmasFastStart = new Date(dateN.getFullYear(), 10, 28);
+    const christmasFastEnd = new Date(dateN.getFullYear() + 1, 0, 6);
 
-    // Сплошные седмицы (нет поста)
-    const svjatkiStart = new Date(date.getFullYear(), 0, 7);
-    const svjatkiEnd = new Date(date.getFullYear(), 0, 17);
-    const maslenitsaStart = new Date(paschaDate);
-    maslenitsaStart.setDate(paschaDate.getDate() - 49);
-    const maslenitsaEnd = new Date(paschaDate);
-    maslenitsaEnd.setDate(paschaDate.getDate() - 42);
-    const radonitsaStart = new Date(paschaDate);
-    radonitsaStart.setDate(paschaDate.getDate() + 8);
-    const radonitsaEnd = new Date(paschaDate);
-    radonitsaEnd.setDate(paschaDate.getDate() + 14);
+    // Святки: 7–17 января
+    const svjatkiStart = new Date(dateN.getFullYear(), 0, 7);
+    const svjatkiEnd = new Date(dateN.getFullYear(), 0, 17);
+
+    // Масленица (сырная седмица): за неделю до Великого поста
+    // Великий пост начинается за 48 дней до Пасхи,
+    // значит Масленица: от -55 до -49 дней до Пасхи
+    const maslenitsaStart = new Date(paschaN);
+    maslenitsaStart.setDate(paschaN.getDate() - 55);
+    const maslenitsaEnd = new Date(paschaN);
+    maslenitsaEnd.setDate(paschaN.getDate() - 49);
 
     // Проверки
     let fastType = '';
@@ -458,8 +466,7 @@ function getFastingInfo(date, paschaDate) {
 
     // Пасха
     if (
-        date.getDate() === paschaDate.getDate() &&
-        date.getMonth() === paschaDate.getMonth()
+        dateN.getTime() === paschaN.getTime()
     ) {
         period = 'Светлое Христово Воскресение (Пасха)';
         week = 'Светлая седмица';
@@ -469,10 +476,10 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Светлая седмица
-    const svWeekStart = new Date(paschaDate);
-    const svWeekEnd = new Date(paschaDate);
-    svWeekEnd.setDate(paschaDate.getDate() + 6);
-    if (date >= svWeekStart && date <= svWeekEnd) {
+    const svWeekStart = new Date(paschaN);
+    const svWeekEnd = new Date(paschaN);
+    svWeekEnd.setDate(paschaN.getDate() + 6);
+    if (dateN >= svWeekStart && dateN <= svWeekEnd) {
         period = 'Светлая седмица';
         week = 'Светлая седмица';
         fastType = 'Поста нет';
@@ -480,18 +487,51 @@ function getFastingInfo(date, paschaDate) {
         return { period, week, fastType, fastText };
     }
 
+    // Седмицы по Пасхе (после Светлой седмицы)
+    if (dateN > svWeekEnd) {
+
+        const MS = 24 * 60 * 60 * 1000;
+
+        // 1-я седмица по Пасхе начинается после Светлой седмицы
+        const firstWeekStart = new Date(paschaN);
+        firstWeekStart.setDate(firstWeekStart.getDate() + 7);
+
+        const diffDays = Math.floor((dateN.getTime() - firstWeekStart.getTime()) / MS);
+
+        // фикс: смещение, чтобы 2-я седмица начиналась корректно
+        const weekNum = Math.max(2, Math.floor(diffDays / 7) + 2);
+
+        period = `${weekNum}-я седмица по Пасхе`;
+        week = `${weekNum}-я седмица по Пасхе`;
+
+        // фикс гласа: на 2-й седмице должен быть глас 1
+        const glas = ((weekNum - 2) % 8) + 1;
+
+        const isFastDay = dateN.getDay() === 3 || dateN.getDay() === 5;
+
+        if (isFastDay) {
+            fastType = `Постный день. Глас ${glas}-й`;
+            fastText = `Постный день`;
+        } else {
+            fastType = `Поста нет. Глас ${glas}-й`;
+            fastText = `Поста нет`;
+        }
+
+        return { period, week, fastType, fastText };
+    }
+
     // Великий пост
-    if (date >= greatLentStart && date <= greatLentEnd) {
+    if (dateN >= greatLentStart && dateN <= greatLentEnd) {
         period = 'Великий пост';
         // Номер седмицы Великого поста
-        const daysFromStart = Math.floor((date - greatLentStart) / (1000 * 60 * 60 * 24));
+        const daysFromStart = Math.floor((dateN - greatLentStart) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Великого поста`;
         // Постная трапеза
-        if (date.getDay() === 0) {
+        if (dateN.getDay() === 0) {
             fastType = 'Послабление в пище (воскресенье)';
             fastText = 'Разрешается растительное масло, вино';
-        } else if (date.getDay() === 6) {
+        } else if (dateN.getDay() === 6) {
             fastType = 'Строгий пост (суббота)';
             fastText = 'Разрешается растительное масло, вино';
         } else {
@@ -502,14 +542,14 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Петров пост
-    if (petrovPostStart <= date && date <= petrovPostEnd) {
+    if (petrovPostStart <= dateN && dateN <= petrovPostEnd) {
         period = 'Петров пост';
         // Считаем седмицу от начала поста
-        const daysFromStart = Math.floor((date - petrovPostStart) / (1000 * 60 * 60 * 24));
+        const daysFromStart = Math.floor((dateN - petrovPostStart) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Петрова поста`;
         // Постная трапеза
-        if (date.getDay() === 0 || date.getDay() === 6) {
+        if (dateN.getDay() === 0 || dateN.getDay() === 6) {
             fastType = 'Послабление в пище (сб/вс)';
             fastText = 'Разрешается рыба, растительное масло, вино';
         } else {
@@ -520,12 +560,12 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Успенский пост
-    if (uspenskyPostStart <= date && date <= uspenskyPostEnd) {
+    if (uspenskyPostStart <= dateN && dateN <= uspenskyPostEnd) {
         period = 'Успенский пост';
-        const daysFromStart = Math.floor((date - uspenskyPostStart) / (1000 * 60 * 60 * 24));
+        const daysFromStart = Math.floor((dateN - uspenskyPostStart) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Успенского поста`;
-        if (date.getDay() === 0 || date.getDay() === 6) {
+        if (dateN.getDay() === 0 || dateN.getDay() === 6) {
             fastType = 'Послабление в пище (сб/вс)';
             fastText = 'Разрешается растительное масло';
         } else {
@@ -536,15 +576,15 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Рождественский пост
-    if ((date >= christmasFastStart && date.getMonth() === 10) || (date <= christmasFastEnd && date.getMonth() === 0)) {
+    if ((dateN >= christmasFastStart && dateN.getMonth() === 10) || (dateN <= christmasFastEnd && dateN.getMonth() === 0)) {
         period = 'Рождественский пост';
         // Номер седмицы считаем с 28 ноября
-        let start = new Date(date.getFullYear(), 10, 28);
-        if (date.getMonth() === 0) start = new Date(date.getFullYear() - 1, 10, 28);
-        const daysFromStart = Math.floor((date - start) / (1000 * 60 * 60 * 24));
+        let start = new Date(dateN.getFullYear(), 10, 28);
+        if (dateN.getMonth() === 0) start = new Date(dateN.getFullYear() - 1, 10, 28);
+        const daysFromStart = Math.floor((dateN - start) / (1000 * 60 * 60 * 24));
         const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
         week = `${sedmitsaNum}-я седмица Рождественского поста`;
-        if (date.getDay() === 0 || date.getDay() === 6) {
+        if (dateN.getDay() === 0 || dateN.getDay() === 6) {
             fastType = 'Послабление в пище (сб/вс)';
             fastText = 'Разрешается рыба, растительное масло, вино';
         } else {
@@ -555,9 +595,8 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Сплошные седмицы
-    if ((date >= svjatkiStart && date <= svjatkiEnd) ||
-        (date >= maslenitsaStart && date <= maslenitsaEnd) ||
-        (date >= radonitsaStart && date <= radonitsaEnd)) {
+    if ((dateN >= svjatkiStart && dateN <= svjatkiEnd) ||
+        (dateN >= maslenitsaStart && dateN <= maslenitsaEnd)) {
         period = 'Сплошная седмица';
         week = 'Нет поста';
         fastType = 'Поста нет';
@@ -566,7 +605,7 @@ function getFastingInfo(date, paschaDate) {
     }
 
     // Обычные дни: пост по средам и пятницам
-    if (date.getDay() === 3 || date.getDay() === 5) { // среда (3), пятница (5)
+    if (dateN.getDay() === 3 || dateN.getDay() === 5) { // среда (3), пятница (5)
         period = 'Обычный день';
         week = 'Постный день';
         fastType = 'Пост (среда/пятница)';
@@ -768,7 +807,7 @@ bot.start((ctx) => {
     scheduleGistSave('start');
     const name = ctx.from.first_name || 'друг';
     const welcomeText = `<b>Мир дому твоему, ${name}! ☦️</b>\n\n` +
-        `Добро пожаловать в <b>«Святую Библию»</b>.\n\n` +
+        `Добро пожаловать в <b>«Священное Писание»</b>.\n\n` +
         `Этот бот поможет тебе всегда иметь под рукой Слово Божье, молитвы и церковный календарь.`;
 
     ctx.replyWithHTML(welcomeText, mainReplyMenu);
