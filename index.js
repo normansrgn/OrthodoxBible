@@ -586,7 +586,7 @@ function getSaintsForDate(month, day) {
     return found ? found.saints : [];
 }
 
-// Главная функция календаря
+
 const cheerio = require('cheerio'); // не забудьте npm install cheerio
 
 // Исправленная функция для получения календаря с корректным парсом "Святые дня"
