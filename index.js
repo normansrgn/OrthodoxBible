@@ -573,6 +573,8 @@ function getFastingInfo(date, paschaDate) {
     };
 }
 
+
+
 // Старый стиль (юлианский календарь)
 function getOldStyleDate(date) {
     const oldDate = new Date(date);
