@@ -311,6 +311,45 @@ try {
 const BIBLE_BOOKS = { 1: "Бытие", 2: "Исход", 3: "Левит", 4: "Числа", 5: "Второзаконие", 6: "Иисус Навин", 7: "Судьи", 8: "Руфь", 9: "1-я Царств", 10: "2-я Царств", 11: "3-я Царств", 12: "4-я Царств", 13: "1-я Паралипоменон", 14: "2-я Паралипоменон", 15: "Ездра", 16: "Неемия", 17: "Есфирь", 18: "Иов", 19: "Псалтирь", 20: "Притчи", 21: "Екклесиаст", 22: "Песнь Песней", 23: "Исаия", 24: "Иеремия", 25: "Плач Иеремии", 26: "Иезекииль", 27: "Даниил", 28: "Осия", 29: "Иоиль", 30: "Амос", 31: "Авдий", 32: "Иона", 33: "Михей", 34: "Наум", 35: "Аввакум", 36: "Софония", 37: "Аггей", 38: "Захария", 39: "Малахия", 40: "От Матфея", 41: "От Марка", 42: "От Луки", 43: "От Иоанна", 44: "Деяния", 45: "К Римлянам", 46: "1-е Коринфянам ", 47: "2-е Коринфянам", 48: "К Галатам", 49: "К Ефесянам", 50: "К Филиппийцам", 51: "К Колосянам", 52: "1-е Фессалоникийцам", 53: "2-е Фессалоникийцам", 54: "1-е Тимофею ", 55: "2-е Тимофею", 56: "К Титу", 57: "К Филимону", 58: "К Евреям", 59: "Иакова", 60: "1-е Петра", 61: "2-е Петра", 62: "1-е Иоанна", 63: "2-е Иоанна", 64: "3-е Иоанна", 65: "Иуды", 66: "Откровение" };
 const getBookName = (id) => BIBLE_BOOKS[id] || `Книга ${id}`;
 
+const AZBYKA_BOOK_TO_BIBLE_ID = {
+    Mt: 40,
+    Mk: 41,
+    Mr: 41,
+    Mark: 41,
+    Lk: 42,
+    Luke: 42,
+    Jn: 43,
+    John: 43,
+    Acts: 44,
+    Rom: 45,
+    '1Cor': 46,
+    '2Cor': 47,
+    Gal: 48,
+    Eph: 49,
+    Phil: 50,
+    Col: 51,
+    '1Thess': 52,
+    '2Thess': 53,
+    '1Tim': 54,
+    '2Tim': 55,
+    Titus: 56,
+    Phlm: 57,
+    Heb: 58,
+    Hebr: 58,
+    Jas: 59,
+    James: 59,
+    '1Pet': 60,
+    '2Pet': 61,
+    '1Jn': 62,
+    '1John': 62,
+    '2Jn': 63,
+    '2John': 63,
+    '3Jn': 64,
+    '3John': 64,
+    Jude: 65,
+    Rev: 66
+};
+
 const PSALMS_CATEGORIES = [
     { name: 'Благодарение', psalms: [33, 65, 102, 117, 145, 149] },
     { name: 'В скорби и унынии', psalms: [26, 36, 39, 41, 56, 101] },
@@ -377,6 +416,23 @@ function getInterpretationLink(bId, cId) {
     return `https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija_${bookNum}/${cId}`;
 }
 
+function getReadingInterpretationLink(code) {
+    const match = String(code || '').match(/^([1-3]?[A-Za-z]+)\.(\d+):/);
+    if (!match) return 'https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/';
+
+    const bookId = AZBYKA_BOOK_TO_BIBLE_ID[match[1]];
+    const chapterId = Number(match[2]);
+    if (!bookId || !chapterId) return 'https://azbyka.ru/otechnik/Lopuhin/tolkovaja_biblija/';
+
+    return getInterpretationLink(bookId, chapterId);
+}
+
+function getReadingKind(title, code) {
+    if (/Евангелие/i.test(title || '')) return 'Евангелие';
+    if (/^(Mt|Mk|Mr|Mark|Lk|Luke|Jn|John)\./i.test(code || '')) return 'Евангелие';
+    return 'Апостол';
+}
+
 function getOrthodoxPascha(year) {
     const a = year % 19, b = year % 4, c = year % 7;
     const d = (19 * a + 15) % 30;
@@ -426,19 +482,20 @@ function getFastingInfo(date, paschaDate) {
     const paschaN = normalize(paschaDate);
 
     const MS = 24 * 60 * 60 * 1000;
+    const addDays = (d, days) => new Date(d.getTime() + days * MS);
+    const diffDays = (a, b) => Math.floor((a - b) / MS);
 
     // Пятидесятница (50-й день после Пасхи)
-    const pentecost = new Date(paschaN);
-    pentecost.setDate(paschaN.getDate() + 49);
+    const pentecost = addDays(paschaN, 49);
+    const getPentecostWeek = (d) => Math.floor(diffDays(d, pentecost) / 7) + 1;
+    const getGlas = (weekNum) => ((weekNum + 5) % 8) + 1;
 
-    // Троицкая седмица (1-я по Пятидесятнице)
-    const trinityWeekStart = new Date(pentecost);
-    const trinityWeekEnd = new Date(pentecost);
-    trinityWeekEnd.setDate(trinityWeekEnd.getDate() + 6);
+    // Троицкая седмица: с Пятидесятницы до субботы перед Неделей всех святых.
+    const trinityWeekStart = pentecost;
+    const trinityWeekEnd = addDays(pentecost, 6);
 
-    // Петров пост (упрощённо как у тебя)
-    const petrovPostStart = new Date(pentecost);
-    petrovPostStart.setDate(pentecost.getDate() + 7);
+    // Апостольский (Петров) пост: с понедельника после Недели всех святых до 12 июля.
+    const apostlesFastStart = addDays(pentecost, 8);
     const petrovPostEnd = new Date(dateN.getFullYear(), 6, 12);
 
     // Успенский пост
@@ -461,19 +518,20 @@ function getFastingInfo(date, paschaDate) {
 
     const isTrinityWeek = dateN >= trinityWeekStart && dateN <= trinityWeekEnd;
     if (isTrinityWeek) {
+        const weekNum = getPentecostWeek(dateN);
+        const glas = getGlas(weekNum);
         return {
             period: 'Седмица 1-я по Пятидесятнице. Троицкая седмица',
             week: 'Седмица 1-я по Пятидесятнице. Троицкая седмица',
-            fastType: 'Поста нет. Глас 7-й',
+            fastType: `Поста нет. Глас ${glas}-й`,
             fastText: 'Поста нет'
         };
     }
 
-    const isPentecostPeriod = dateN > trinityWeekEnd && dateN < petrovPostStart;
+    const isPentecostPeriod = dateN > trinityWeekEnd && dateN < apostlesFastStart;
     if (isPentecostPeriod) {
-        const days = Math.floor((dateN - trinityWeekEnd) / MS);
-        const weekNum = Math.floor(days / 7) + 2;
-        const glas = ((weekNum + 6) % 8) + 1;
+        const weekNum = getPentecostWeek(dateN);
+        const glas = getGlas(weekNum);
         const isFastDay = dateN.getDay() === 3 || dateN.getDay() === 5;
 
         return {
@@ -506,17 +564,17 @@ function getFastingInfo(date, paschaDate) {
         };
     }
 
-    // Петров пост
-    if (dateN >= petrovPostStart && dateN <= petrovPostEnd) {
-        const daysFromStart = Math.floor((dateN - petrovPostStart) / MS);
-        const sedmitsaNum = Math.floor(daysFromStart / 7) + 1;
+    // Апостольский (Петров) пост
+    if (dateN >= apostlesFastStart && dateN <= petrovPostEnd) {
+        const weekNum = getPentecostWeek(dateN);
+        const glas = getGlas(weekNum);
 
         return {
-            period: 'Петров пост',
-            week: `${sedmitsaNum}-я седмица Петрова поста`,
+            period: 'Апостольский пост',
+            week: `${weekNum}-я седмица по Пятидесятнице`,
             fastType: (dateN.getDay() === 0 || dateN.getDay() === 6)
-                ? 'Послабление (рыба)'
-                : 'Пост',
+                ? `Послабление (рыба). Глас ${glas}-й`
+                : `Пост. Глас ${glas}-й`,
             fastText: 'Пост'
         };
     }
@@ -591,6 +649,146 @@ function getSaintsForDate(month, day) {
 
 const cheerio = require('cheerio'); // не забудьте npm install cheerio
 
+function httpsGetText(url) {
+    return new Promise((resolve) => {
+        https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+            let raw = '';
+            res.on('data', chunk => raw += chunk);
+            res.on('end', () => resolve(raw));
+        }).on('error', () => resolve(null));
+    });
+}
+
+async function fetchAzbykaPresentations(year, month, day) {
+    const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const raw = await httpsGetText(url);
+    if (!raw) return null;
+
+    try {
+        return JSON.parse(raw);
+    } catch (e) {
+        return null;
+    }
+}
+
+function normalizeAzbykaText(text) {
+    return String(text || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function stripHtmlToText(html) {
+    return normalizeAzbykaText(cheerio.load(`<div>${html || ''}</div>`, { decodeEntities: false }).text());
+}
+
+function parseAzbykaWidgetInfo(data) {
+    if (!data?.presentations) return {};
+
+    const $ = cheerio.load(data.presentations, { decodeEntities: false });
+    const fastPeriod = normalizeAzbykaText($('.fasting-message').first().text());
+
+    return { fastPeriod };
+}
+
+function parseAzbykaReadings($, year, month, day) {
+    const readingsHtml = $('#chteniya .readings-text').first().html();
+    if (!readingsHtml) return [];
+
+    const readingLinkRe = /<a\b[^>]*class=["'][^"']*\bbibref\b[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    const matches = [...readingsHtml.matchAll(readingLinkRe)];
+    const readings = [];
+    let currentService = '';
+
+    matches.forEach((match, index) => {
+        const fullMatch = match[0];
+        const href = match[1];
+        const refText = stripHtmlToText(match[2]).replace(/[–—]/g, '-');
+        const prefixHtml = readingsHtml.slice(index === 0 ? 0 : matches[index - 1].index + matches[index - 1][0].length, match.index);
+        const suffixHtml = readingsHtml.slice(match.index + fullMatch.length, matches[index + 1]?.index ?? readingsHtml.length);
+        const prefixText = stripHtmlToText(prefixHtml);
+        const suffixText = stripHtmlToText(suffixHtml);
+
+        const serviceMatch = prefixText.match(/(?:^|[\s.])([А-ЯЁа-яё]{2,12})\.?\s*(?::|[-–])\s*$/);
+        if (serviceMatch) currentService = serviceMatch[1];
+
+        const code = decodeURIComponent((href.split('?')[1] || refText).replace(/&amp;/g, '&')).trim();
+        const title = stripHtmlToText(fullMatch.match(/\btitle=["']([^"']+)["']/i)?.[1] || '');
+        const zachalo = suffixText.match(/зач\.?\s*([0-9]+(?:\s*от\s*[А-ЯЁа-яё]+)?)/i)?.[1]?.trim() || null;
+        const service = currentService || 'Чтение';
+        const kind = getReadingKind(title, code);
+        const url = href.startsWith('http') ? href.replace(/&amp;/g, '&') : `https://azbyka.ru${href}`.replace(/&amp;/g, '&');
+
+        readings.push({
+            service,
+            kind,
+            ref: refText,
+            code,
+            zachalo,
+            title,
+            url,
+            interpretationUrl: getReadingInterpretationLink(code)
+        });
+    });
+
+    return readings;
+}
+
+function formatDailyReadings(readings, ymd) {
+    if (!Array.isArray(readings) || !readings.length) return '';
+
+    const lines = readings.slice(0, 8).map((reading) => {
+        const zachalo = reading.zachalo ? `, зач. ${reading.zachalo}` : '';
+        return `• <b>${reading.service}. ${reading.kind}:</b> <a href="${reading.url}">${reading.ref}</a>${zachalo} — <a href="${reading.interpretationUrl}">толк.</a>`;
+    });
+
+    const dayReadingsUrl = `https://azbyka.ru/biblia/days/${ymd}`;
+    return `<b>📖 Чтения дня:</b>\n${lines.join('\n')}\n<a href="${dayReadingsUrl}">Все богослужебные чтения дня</a>\n\n`;
+}
+
+async function fetchAzbykaDayInfo(year, month, day) {
+    const url = `https://azbyka.ru/days/${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const html = await httpsGetText(url);
+    if (!html) return {};
+
+    const $ = cheerio.load(html, { decodeEntities: false });
+    const sedmica = normalizeAzbykaText($('.day__post-wp .shadow').first().text());
+    const fastPeriod = normalizeAzbykaText($('.fasting-message').first().text());
+    const dayText = normalizeAzbykaText($('.day__text').first().text());
+    const glasMatch = dayText.match(/Глас\s*(\d+)-й/i);
+    const metaDescription = normalizeAzbykaText($('meta[name="description"]').attr('content'));
+    const metaSedmicaMatch = metaDescription.match(/((?:Седмица|Неделя)[^.]+(?:Пятидесятнице|пост[ау]?|Пасхе|Богоявлении|Рождестве Христовом|Фарисее|сыне|Суде))/i);
+
+    return {
+        sedmica: sedmica || normalizeAzbykaText(metaSedmicaMatch?.[1]),
+        fastPeriod,
+        glas: glasMatch?.[1] || null,
+        readings: parseAzbykaReadings($, year, month, day)
+    };
+}
+
+function mergeAzbykaFastingInfo(fasting, azbykaInfo = {}) {
+    const merged = { ...fasting };
+    if (azbykaInfo.sedmica) merged.week = azbykaInfo.sedmica;
+    if (azbykaInfo.fastPeriod) merged.period = azbykaInfo.fastPeriod;
+    if (azbykaInfo.fastPeriod || azbykaInfo.glas) {
+        const parts = [];
+        if (azbykaInfo.fastPeriod) parts.push(azbykaInfo.fastPeriod);
+        if (azbykaInfo.glas) parts.push(`Глас ${azbykaInfo.glas}-й`);
+        merged.fastType = parts.join('. ');
+        merged.fastText = azbykaInfo.fastPeriod || fasting.fastText;
+    }
+    return merged;
+}
+
+function formatFastingLine(fasting) {
+    if (!fasting.fastText || fasting.fastType.includes(fasting.fastText)) {
+        return fasting.fastType;
+    }
+    return `${fasting.fastType} (${fasting.fastText})`;
+}
+
+
 // Исправленная функция для получения календаря с корректным парсом "Святые дня"
 async function getDetailedCalendar() {
     const p = getMoscowParts(new Date());
@@ -604,19 +802,10 @@ async function getDetailedCalendar() {
     const azLink = `https://azbyka.ru/days/${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     let saints = [];
+    let azbykaWidgetInfo = {};
     try {
-        const data = await new Promise((resolve, reject) => {
-            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-                let raw = '';
-                res.on('data', chunk => raw += chunk);
-                res.on('end', () => {
-                    try {
-                        resolve(JSON.parse(raw));
-                    } catch (e) { resolve(null); }
-                });
-            }).on('error', () => resolve(null));
-        });
+        const data = await fetchAzbykaPresentations(year, month, day);
+        azbykaWidgetInfo = parseAzbykaWidgetInfo(data);
         if (data && data.presentations) {
             // Парсим только список святых, удаляя запрещённые теги Telegram
             const $ = cheerio.load(data.presentations, { decodeEntities: false });
@@ -648,14 +837,19 @@ async function getDetailedCalendar() {
     // Старый стиль
     const oldStyle = getOldStyleDate(now);
     // Пост, седмица, период — локальные вычисления
-    const fasting = getFastingInfo(now, getOrthodoxPaschaDate(year));
+    const azbykaDayInfo = await fetchAzbykaDayInfo(year, month, day);
+    const fasting = mergeAzbykaFastingInfo(
+        getFastingInfo(now, getOrthodoxPaschaDate(year)),
+        { ...azbykaWidgetInfo, ...azbykaDayInfo }
+    );
     // Формируем текст
     let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
     text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${String(month).padStart(2, '0')} (${weekday})</i>\n`;
     text += `────────────────────\n\n`;
     text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
     text += `<b>Период:</b> ${fasting.period}\n`;
-    text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
+    text += `<b>🥗 Пост / Трапеза:</b> ${formatFastingLine(fasting)}\n\n`;
+    text += formatDailyReadings(azbykaDayInfo.readings, `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     // Святые дня
     if (saints.length) {
         text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
@@ -1327,17 +1521,10 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false, showButtons = t
 
     // Получаем святых дня через API (безопасно)
     let saints = [];
+    let azbykaWidgetInfo = {};
     try {
-        const data = await new Promise((resolve) => {
-            const url = `https://azbyka.ru/days/widgets/presentations.json?prevNextLinks=1&image=0&date=${year}-${month}-${day}`;
-            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-                let raw = '';
-                res.on('data', chunk => raw += chunk);
-                res.on('end', () => {
-                    try { resolve(JSON.parse(raw)); } catch (e) { resolve(null); }
-                });
-            }).on('error', () => resolve(null));
-        });
+        const data = await fetchAzbykaPresentations(year, Number(month), Number(day));
+        azbykaWidgetInfo = parseAzbykaWidgetInfo(data);
         if (data && data.presentations) {
             const $ = cheerio.load(data.presentations, { decodeEntities: false });
             const arr = [];
@@ -1359,14 +1546,19 @@ async function sendDynamicCalendar(ctx, dateObj, isEdit = false, showButtons = t
 
     const moscowNoon = toMoscowNoonDate(year, Number(month), Number(day));
     const oldStyle = getOldStyleDate(moscowNoon);
-    const fasting = getFastingInfo(moscowNoon, getOrthodoxPaschaDate(year));
+    const azbykaDayInfo = await fetchAzbykaDayInfo(year, Number(month), Number(day));
+    const fasting = mergeAzbykaFastingInfo(
+        getFastingInfo(moscowNoon, getOrthodoxPaschaDate(year)),
+        { ...azbykaWidgetInfo, ...azbykaDayInfo }
+    );
 
     let text = `<b>📅 ЦЕРКОВНЫЙ КАЛЕНДАРЬ</b>\n`;
     text += `<i>Старый стиль: ${oldStyle.getDate()}.${String(oldStyle.getMonth() + 1).padStart(2, '0')}, Новый стиль: ${day}.${month} (${weekday})</i>\n`;
     text += `────────────────────\n\n`;
     text += `<b>📜 Седмица и период:</b> ${fasting.week}\n`;
     text += `<b>Период:</b> ${fasting.period}\n`;
-    text += `<b>🥗 Пост / Трапеза:</b> ${fasting.fastType} (${fasting.fastText})\n\n`;
+    text += `<b>🥗 Пост / Трапеза:</b> ${formatFastingLine(fasting)}\n\n`;
+    text += formatDailyReadings(azbykaDayInfo.readings, `${year}-${month}-${day}`);
     if (saints.length) {
         text += `<b>🕯 Святые дня:</b>\n${saints.join('\n')}\n\n`;
     } else {

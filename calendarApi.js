@@ -4,7 +4,17 @@ const app = express();
 // ============================
 // 🕊 ПАСХА (можешь заменить или считать отдельно)
 // ============================
-const PASCHA_2026 = new Date("2026-04-12");
+function getOrthodoxPaschaDate(year) {
+  const a = year % 19;
+  const b = year % 4;
+  const c = year % 7;
+  const d = (19 * a + 15) % 30;
+  const e = (2 * b + 4 * c + 6 * d + 6) % 7;
+  const julianPascha = new Date(Date.UTC(year, 2, 22 + d + e));
+
+  julianPascha.setUTCDate(julianPascha.getUTCDate() + 13);
+  return new Date(julianPascha.getUTCFullYear(), julianPascha.getUTCMonth(), julianPascha.getUTCDate());
+}
 
 // ============================
 // 📆 ФИКСИРОВАННЫЕ ПРАЗДНИКИ (упрощённый набор)
@@ -47,19 +57,27 @@ function diffDays(date1, date2) {
   return Math.floor((date1 - date2) / (1000 * 60 * 60 * 24));
 }
 
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 // ============================
 // 🎵 ГЛАС (1–8 цикл)
 // ============================
 function getTone(week) {
   if (week <= 0) return null;
-  return ((week - 1) % 8) + 1;
+  return ((week + 5) % 8) + 1;
 }
 
 // ============================
 // 📜 СЕДМИЦА ПО ПАСХЕ
 // ============================
 function getWeekAfterPascha(date) {
-  const days = diffDays(date, PASCHA_2026);
+  const pascha = getOrthodoxPaschaDate(date.getFullYear());
+  const pentecost = addDays(pascha, 49);
+  const days = diffDays(date, pentecost);
   if (days < 0) return null;
   return Math.floor(days / 7) + 1;
 }
@@ -68,13 +86,21 @@ function getWeekAfterPascha(date) {
 // 🥗 ПОСТ
 // ============================
 function getFasting(date) {
-  const days = diffDays(date, PASCHA_2026);
+  const pascha = getOrthodoxPaschaDate(date.getFullYear());
+  const pentecost = addDays(pascha, 49);
+  const apostlesFastStart = addDays(pentecost, 8);
+  const apostlesFastEnd = new Date(date.getFullYear(), 6, 12);
 
-  if (days >= 0 && days <= 6) {
+  if (date >= apostlesFastStart && date <= apostlesFastEnd) {
+    return "Апостольский пост";
+  }
+
+  const daysAfterPascha = diffDays(date, pascha);
+  if (daysAfterPascha >= 0 && daysAfterPascha <= 6) {
     return "Поста нет (Светлая седмица)";
   }
 
-  return "Поста нет (Пасхальный период)";
+  return "Поста нет";
 }
 
 // ============================
@@ -105,7 +131,7 @@ app.get("/day", (req, res) => {
   res.json({
     date: date.toISOString().split("T")[0],
 
-    sedmica: week ? `${week}-я седмица по Пасхе` : "До Пасхи",
+    sedmica: week ? `${week}-я седмица по Пятидесятнице` : "До Пятидесятницы",
     tone: tone ? `${tone}-й глас` : "Нет гласа",
 
     fasting: getFasting(date),
@@ -134,7 +160,7 @@ app.get("/month", (req, res) => {
       date: date.toISOString().split("T")[0],
       feast: getFeast(date),
       saints: getSaints(date),
-      sedmica: week ? `${week}-я седмица` : null,
+      sedmica: week ? `${week}-я седмица по Пятидесятнице` : null,
       tone: tone ? `${tone}-й глас` : null,
       fasting: getFasting(date)
     });
